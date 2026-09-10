@@ -143,6 +143,22 @@ def render_detail_table(df_subset: pd.DataFrame):
         st.dataframe(view, use_container_width=True, hide_index=True)
 
 
+def pipeline_stage_counts(df_subset: pd.DataFrame) -> dict:
+    """Hitung berapa kolom DWH unik di df_subset yang sampai ke tiap stage
+    pipeline (Bronze/Silver1/Silver2) dan Hardcode/Gap. Di-dedup dulu by
+    (Short Table, Column DWH) supaya kolom yang dipakai banyak project tidak
+    dobel-hitung, dan kolom senama di table berbeda tetap dihitung terpisah."""
+    unique = df_subset.dropna(subset=["Column DWH"]).drop_duplicates(subset=["Short Table", "Column DWH"])
+    return {
+        "unik": len(unique),
+        "bronze": int((unique["Status"] == "Table").sum()) if "Status" in unique else 0,
+        "silver1": int(unique["Silver1 Table"].notna().sum()) if "Silver1 Table" in unique else 0,
+        "silver2": int(unique["Silver2 Table"].notna().sum()) if "Silver2 Table" in unique else 0,
+        "hardcode": int((unique["Status"] == "Hardcode").sum()) if "Status" in unique else 0,
+        "gap": int((unique["Status"] == "Gap").sum()) if "Status" in unique else 0,
+    }
+
+
 # ---------------------------------------------------------------------
 # Seleksi Kolom: backend Google Sheets lewat Apps Script Web App
 # ---------------------------------------------------------------------
@@ -400,11 +416,19 @@ if mode == "🔎 Cari by Table":
     selected_table = st.selectbox(f"Pilih table ({len(tables)} ditemukan)", tables)
     subset = df_f[df_f["Short Table"] == selected_table]
     projects_using = sorted(subset["Project"].dropna().unique())
+    stats = pipeline_stage_counts(subset)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Jumlah Project Pemakai", len(projects_using))
     c2.metric("Jumlah Baris Kolom", len(subset))
-    c3.metric("Jumlah Kolom DWH Unik", subset["Column DWH"].nunique())
+    c3.metric("Jumlah Kolom DWH Unik", stats["unik"])
+
+    d1, d2, d3, d4, d5 = st.columns(5)
+    d1.metric("🟩 ke Bronze", stats["bronze"])
+    d2.metric("ke Silver 1", stats["silver1"])
+    d3.metric("ke Silver 2", stats["silver2"])
+    d4.metric("🟨 Hardcode", stats["hardcode"])
+    d5.metric("🟥 Gap", stats["gap"])
 
     st.subheader("📋 Project yang memakai table ini")
     st.write(", ".join(projects_using) if projects_using else "-")
@@ -425,11 +449,19 @@ elif mode == "🔎 Cari by Project":
     selected_project = st.selectbox(f"Pilih project ({len(projects)} ditemukan)", projects)
     subset = df_f[df_f["Project"] == selected_project]
     tables_used = sorted(subset["Short Table"].dropna().unique())
+    stats = pipeline_stage_counts(subset)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Jumlah Table Dipakai", len(tables_used))
     c2.metric("Jumlah Baris Kolom", len(subset))
-    c3.metric("Jumlah Kolom DWH Unik", subset["Column DWH"].nunique())
+    c3.metric("Jumlah Kolom DWH Unik", stats["unik"])
+
+    d1, d2, d3, d4, d5 = st.columns(5)
+    d1.metric("🟩 ke Bronze", stats["bronze"])
+    d2.metric("ke Silver 1", stats["silver1"])
+    d3.metric("ke Silver 2", stats["silver2"])
+    d4.metric("🟨 Hardcode", stats["hardcode"])
+    d5.metric("🟥 Gap", stats["gap"])
 
     st.subheader("📋 Table yang dipakai project ini")
     st.write(", ".join(tables_used) if tables_used else "-")
