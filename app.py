@@ -148,17 +148,12 @@ def pipeline_stage_counts(df_subset: pd.DataFrame) -> dict:
     pipeline (Bronze/Silver) dan Hardcode/Gap. Di-dedup dulu by (Short Table,
     Column DWH) supaya kolom yang dipakai banyak project tidak dobel-hitung,
     dan kolom senama di table berbeda tetap dihitung terpisah. "Silver"
-    dihitung kalau sudah sampai Silver Tier 1 ATAU Silver Tier 2."""
+    dihitung dari Silver Tier 2 saja (stage akhir)."""
     unique = df_subset.dropna(subset=["Column DWH"]).drop_duplicates(subset=["Short Table", "Column DWH"])
-    reached_silver = pd.Series(False, index=unique.index)
-    if "Silver1 Table" in unique:
-        reached_silver |= unique["Silver1 Table"].notna()
-    if "Silver2 Table" in unique:
-        reached_silver |= unique["Silver2 Table"].notna()
     return {
         "unik": len(unique),
         "bronze": int((unique["Status"] == "Table").sum()) if "Status" in unique else 0,
-        "silver": int(reached_silver.sum()),
+        "silver": int(unique["Silver2 Table"].notna().sum()) if "Silver2 Table" in unique else 0,
         "hardcode": int((unique["Status"] == "Hardcode").sum()) if "Status" in unique else 0,
         "gap": int((unique["Status"] == "Gap").sum()) if "Status" in unique else 0,
     }
