@@ -145,15 +145,20 @@ def render_detail_table(df_subset: pd.DataFrame):
 
 def pipeline_stage_counts(df_subset: pd.DataFrame) -> dict:
     """Hitung berapa kolom DWH unik di df_subset yang sampai ke tiap stage
-    pipeline (Bronze/Silver1/Silver2) dan Hardcode/Gap. Di-dedup dulu by
-    (Short Table, Column DWH) supaya kolom yang dipakai banyak project tidak
-    dobel-hitung, dan kolom senama di table berbeda tetap dihitung terpisah."""
+    pipeline (Bronze/Silver) dan Hardcode/Gap. Di-dedup dulu by (Short Table,
+    Column DWH) supaya kolom yang dipakai banyak project tidak dobel-hitung,
+    dan kolom senama di table berbeda tetap dihitung terpisah. "Silver"
+    dihitung kalau sudah sampai Silver Tier 1 ATAU Silver Tier 2."""
     unique = df_subset.dropna(subset=["Column DWH"]).drop_duplicates(subset=["Short Table", "Column DWH"])
+    reached_silver = pd.Series(False, index=unique.index)
+    if "Silver1 Table" in unique:
+        reached_silver |= unique["Silver1 Table"].notna()
+    if "Silver2 Table" in unique:
+        reached_silver |= unique["Silver2 Table"].notna()
     return {
         "unik": len(unique),
         "bronze": int((unique["Status"] == "Table").sum()) if "Status" in unique else 0,
-        "silver1": int(unique["Silver1 Table"].notna().sum()) if "Silver1 Table" in unique else 0,
-        "silver2": int(unique["Silver2 Table"].notna().sum()) if "Silver2 Table" in unique else 0,
+        "silver": int(reached_silver.sum()),
         "hardcode": int((unique["Status"] == "Hardcode").sum()) if "Status" in unique else 0,
         "gap": int((unique["Status"] == "Gap").sum()) if "Status" in unique else 0,
     }
@@ -423,12 +428,11 @@ if mode == "🔎 Cari by Table":
     c2.metric("Jumlah Baris Kolom", len(subset))
     c3.metric("Jumlah Kolom DWH Unik", stats["unik"])
 
-    d1, d2, d3, d4, d5 = st.columns(5)
+    d1, d2, d3, d4 = st.columns(4)
     d1.metric("🟩 ke Bronze", stats["bronze"])
-    d2.metric("ke Silver 1", stats["silver1"])
-    d3.metric("ke Silver 2", stats["silver2"])
-    d4.metric("🟨 Hardcode", stats["hardcode"])
-    d5.metric("🟥 Gap", stats["gap"])
+    d2.metric("ke Silver", stats["silver"])
+    d3.metric("🟨 Hardcode", stats["hardcode"])
+    d4.metric("🟥 Gap", stats["gap"])
 
     st.subheader("📋 Project yang memakai table ini")
     st.write(", ".join(projects_using) if projects_using else "-")
@@ -456,12 +460,11 @@ elif mode == "🔎 Cari by Project":
     c2.metric("Jumlah Baris Kolom", len(subset))
     c3.metric("Jumlah Kolom DWH Unik", stats["unik"])
 
-    d1, d2, d3, d4, d5 = st.columns(5)
+    d1, d2, d3, d4 = st.columns(4)
     d1.metric("🟩 ke Bronze", stats["bronze"])
-    d2.metric("ke Silver 1", stats["silver1"])
-    d3.metric("ke Silver 2", stats["silver2"])
-    d4.metric("🟨 Hardcode", stats["hardcode"])
-    d5.metric("🟥 Gap", stats["gap"])
+    d2.metric("ke Silver", stats["silver"])
+    d3.metric("🟨 Hardcode", stats["hardcode"])
+    d4.metric("🟥 Gap", stats["gap"])
 
     st.subheader("📋 Table yang dipakai project ini")
     st.write(", ".join(tables_used) if tables_used else "-")
