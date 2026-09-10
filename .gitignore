@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.venv/
+
+# Secrets - JANGAN pernah di-commit
+.streamlit/secrets.toml
+
+# Backup otomatis dari mode Seleksi Kolom (artefak lokal, tidak perlu di-commit)
+*.xlsx.bak
