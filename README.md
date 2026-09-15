@@ -7,10 +7,11 @@ Streamlit app kecil untuk menelusuri progress migrasi data AXA Mandiri
    memakainya, lalu lihat detail tiap kolomnya sampai ke Silver Tier 2.
 2. **Cari by Project** — pilih satu project, lihat table & kolom apa saja
    yang dipakai, lalu lihat detail tiap kolomnya sampai ke Silver Tier 2.
-3. **Seleksi Kolom** — PIC pilih project → pilih table relevan → centang
-   kolom DWH yang bener-bener dipakai project itu. Hasilnya ditulis balik
-   sebagai 3 sheet tambahan di `Checking_Progress_Migration.xlsx` sendiri
-   (lihat bagian 4).
+3. **Seleksi Kolom** — PIC pilih project → (opsional) upload dokumen
+   Dataiku Flow buat pre-fill otomatis (lihat bagian 6) → pilih table
+   relevan → centang kolom DWH yang bener-bener dipakai project itu.
+   Hasilnya disimpan ke Google Sheets atau file lokal, tergantung setup
+   (lihat bagian 4 & 5).
 
 ---
 
@@ -172,7 +173,7 @@ backend (Google Sheets maupun file lokal).
 App otomatis pilih salah satu, tergantung ada tidaknya secrets Google:
 
 - **Ada secrets `gsheet_webapp_url` + `gsheet_webapp_token`** → pakai
-  **Google Sheets** (lewat Apps Script Web App, lihat bagian 7). 3 sheet
+  **Google Sheets** (lewat Apps Script Web App, lihat bagian 8). 3 sheet
   di atas jadi 3 tab di Google Sheet tujuan. Ini yang dipakai kalau app
   di-deploy ke hosting gratis karena storage container di hosting gratis
   itu sementara (ephemeral) — kalau hasil seleksi ditulis ke file Excel
@@ -188,7 +189,53 @@ Caption di mode Seleksi Kolom bakal bilang backend mana yang lagi aktif.
 
 ---
 
-## 6. Struktur kode (`app.py`)
+## 6. Pre-fill dari Dokumen Dataiku Flow (opsional)
+
+Kalau project-nya di-develop di Dataiku, biasanya ada dokumen "Dataiku Flow
+Documentation" (.docx, export otomatis dari Dataiku) yang isinya daftar
+lengkap dataset & recipe di flow-nya. Di mode Seleksi Kolom, ada expander
+**"📄 Bantu pre-fill dari Dokumen Dataiku Flow"** — upload dokumen itu, app
+otomatis pre-centang kolom yang beneran kepakai, biar PIC tidak perlu
+centang manual dari nol.
+
+**Cara kerjanya (`dataiku_doc.py`) — murni parsing deterministik, TANPA
+AI**, baca struktur dokumen yang konsisten (Dataiku selalu export dengan
+format yang sama):
+
+- Ambil daftar semua dataset di flow + schema kolom lengkapnya.
+- Ambil kolom yang **eksplisit tertulis** dipakai sebagai join key / group
+  key / distinct key / pivot key di recipe-recipe-nya.
+- Cocokkan nama dataset dengan `Short Table` di Coretan (cuma yang
+  namanya PERSIS sama yang dipakai, supaya tidak salah mapping).
+
+**Default centang yang dihasilkan:**
+
+| Kondisi | Default | Kenapa |
+|---|---|---|
+| Kolom confirmed (join/group/distinct key) | ✅ tercentang | Eksplisit tertulis dipakai di dokumen |
+| Table tidak kena recipe "Prepare" sama sekali | ✅ tercentang (semua kolom) | Tidak ada step yang membuang kolom, jadi semua ikut alur |
+| Table kena recipe "Prepare" tapi kolomnya tidak confirmed | ❌ tidak tercentang | Dataiku memang tidak mencatat nama kolom spesifik yang diproses step "Prepare" (cuma jenis step-nya, misal "ColumnsSelector") — jadi tidak bisa dipastikan dari dokumen, **PIC wajib review manual** |
+| Table project ini tidak ketemu di dokumen | ✅ tercentang (perilaku lama) | Tidak ada info dari dokumen, balik ke default sebelumnya |
+
+**Saran AI (Groq) — opsional, buat kolom yang "❌ tidak tercentang" di atas:**
+kalau secret `groq_api_key` diisi (lihat `.streamlit/secrets.toml.example`,
+daftar gratis di [console.groq.com/keys](https://console.groq.com/keys)),
+muncul tombol **"🤖 Minta saran AI"**. Groq dikasih daftar kolom yang belum
+pasti + konteks (jenis step Prepare yang menyentuh table itu, kolom yang
+sudah confirmed) dan diminta milih kolom mana yang kemungkinan masih
+dipakai — **cuma boleh milih dari daftar yang dikasih, tidak boleh
+mengarang nama kolom baru** (dicek ulang di kode, bukan cuma pesan
+prompt). Hasilnya ditandai **"🤖 saran AI (belum pasti)"** di kolom "Sumber
+Dokumen" — beda label dari "✅ confirmed", supaya PIC tahu itu tebakan AI
+berdasarkan konteks, bukan fakta yang tertulis eksplisit di dokumen.
+
+> Dokumen Dataiku Flow yang besar (ribuan dataset/recipe) bisa makan
+> waktu ~10-20 detik buat di-parse. Hasil parsing di-cache (`@st.cache_data`)
+> supaya tidak diulang tiap ada interaksi UI lain.
+
+---
+
+## 7. Struktur kode (`app.py`)
 
 File `app.py` sengaja dibuat satu file (bukan dipecah banyak modul) supaya
 gampang dibaca ulang. Bagian-bagiannya:
@@ -216,7 +263,14 @@ gampang dibaca ulang. Bagian-bagiannya:
    backend file Excel lokal (fallback + backup otomatis).
 8. **`save_project_selection()`** — dispatcher, dipanggil dari UI, milih
    backend gsheet atau lokal berdasarkan `gsheet_enabled()`.
-9. **Bagian UI** — sidebar (sumber data + filter), lalu tiga mode di atas.
+9. **`groq_enabled()` / `ask_groq_column_suggestions()`** — saran AI buat
+   kolom yang belum pasti dari hasil parsing dokumen Dataiku (lihat bagian 6).
+10. **`dataiku_doc.py`** (module terpisah) — parser deterministik dokumen
+    Dataiku Flow Documentation. `parse_dataiku_doc()` baca .docx jadi
+    `(datasets, recipes)`, `build_project_column_report()` ringkas jadi
+    laporan per-table siap pakai. Murni Python + `python-docx`, tanpa
+    Streamlit, jadi bisa dites terpisah.
+11. **Bagian UI** — sidebar (sumber data + filter), lalu tiga mode di atas.
 
 ### Kalau mau extend
 
@@ -234,7 +288,7 @@ gampang dibaca ulang. Bagian-bagiannya:
 
 ---
 
-## 7. Deploy ke Streamlit Community Cloud (gratis)
+## 8. Deploy ke Streamlit Community Cloud (gratis)
 
 Supaya orang lain bisa akses lewat URL publik. Ada 2 tahap: (a) setup
 Google Sheets sebagai storage persisten buat mode Seleksi Kolom, (b) push

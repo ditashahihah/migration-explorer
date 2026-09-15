@@ -14,6 +14,7 @@ struktur data & kolomnya.
 """
 
 import io
+import json
 import shutil
 
 import pandas as pd
@@ -167,6 +168,64 @@ def pipeline_stage_counts(df_subset: pd.DataFrame) -> dict:
         "hardcode": int((unique["Status"] == "Hardcode").sum()) if "Status" in unique else 0,
         "gap": int((unique["Status"] == "Gap").sum()) if "Status" in unique else 0,
     }
+
+
+# ---------------------------------------------------------------------
+# Seleksi Kolom: saran AI (Groq) buat kolom yang tidak bisa dipastikan dari
+# dokumen (kena recipe "Prepare" tapi nama kolomnya tidak tercatat).
+# Groq CUMA BOLEH MILIH dari daftar kolom yang dikasih (closed-set) - tidak
+# boleh mengarang nama kolom baru, supaya tidak ada hasil yang halusinasi.
+# ---------------------------------------------------------------------
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = "llama-3.3-70b-versatile"
+
+
+def groq_enabled() -> bool:
+    try:
+        return "groq_api_key" in st.secrets
+    except Exception:
+        return False
+
+
+def ask_groq_column_suggestions(table_name: str, candidate_columns: list, context_note: str) -> tuple[set, str]:
+    """Minta Groq milih kolom mana (dari candidate_columns SAJA) yang
+    kemungkinan masih dipakai. Return (set_kolom_disarankan, alasan_singkat)."""
+    if not candidate_columns:
+        return set(), ""
+
+    prompt = (
+        f"Kamu membantu menganalisis pipeline data Dataiku untuk table '{table_name}'.\n"
+        f"Konteks: {context_note}\n\n"
+        "Daftar kolom yang TERSEDIA di table ini (belum ada bukti eksplisit "
+        "dipakai atau tidak di dokumen flow-nya):\n"
+        + "\n".join(f"- {c}" for c in candidate_columns)
+        + "\n\nDari daftar itu SAJA (jangan sebutkan nama kolom lain yang "
+        "tidak ada di daftar), kolom mana yang menurutmu paling mungkin "
+        "masih dipakai/relevan di pipeline ini berdasarkan nama & "
+        'konteksnya? Balas HANYA dalam format JSON: '
+        '{"likely_used": ["nama_kolom", ...], "reasoning": "alasan singkat 1-2 kalimat"}'
+    )
+    resp = requests.post(
+        GROQ_API_URL,
+        headers={"Authorization": f"Bearer {st.secrets['groq_api_key']}"},
+        json={
+            "model": st.secrets.get("groq_model", GROQ_MODEL),
+            "messages": [{"role": "user", "content": prompt}],
+            "response_format": {"type": "json_object"},
+            "temperature": 0,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    content = resp.json()["choices"][0]["message"]["content"]
+    parsed = json.loads(content)
+
+    # jaga2: cuma terima nama yang beneran ada di daftar candidate, buang
+    # kalau Groq ngarang nama yang tidak diminta
+    candidate_set = set(candidate_columns)
+    likely = {c for c in parsed.get("likely_used", []) if c in candidate_set}
+    reasoning = str(parsed.get("reasoning", "")).strip()
+    return likely, reasoning
 
 
 # ---------------------------------------------------------------------
@@ -523,6 +582,7 @@ else:  # 🧩 Seleksi Kolom
 
     doc_report = {}
     doc_datasets = {}
+    groq_suggestions = st.session_state.get(f"groq_suggestions_{sel_project}", {})
     if doc_file is not None:
         doc_datasets, doc_recipes = parse_uploaded_doc(doc_file.getvalue())
         coretan_short_tables = set(df["Short Table"].dropna().unique())
@@ -539,6 +599,42 @@ else:  # 🧩 Seleksi Kolom
             for t in matched_in_project:
                 st.markdown(f"**{t}** ({len(doc_datasets[t].columns)} kolom di schema)")
                 st.write(", ".join(doc_datasets[t].columns) if doc_datasets[t].columns else "-")
+
+        uncertain_tables = [t for t in matched_in_project if doc_report[t]["uncertain"]]
+        groq_key = f"groq_suggestions_{sel_project}"
+        if uncertain_tables:
+            if not groq_enabled():
+                st.info(
+                    f"{len(uncertain_tables)} table ({', '.join(uncertain_tables)}) punya kolom yang "
+                    "belum pasti (kena recipe Prepare). Tambahkan `groq_api_key` di secrets kalau mau "
+                    "dapat saran AI buat kolom-kolom itu — lihat README."
+                )
+            elif st.button("🤖 Minta saran AI (Groq) untuk kolom yang belum pasti", key=f"groq_btn_{sel_project}"):
+                suggestions = {}
+                try:
+                    with st.spinner(f"Tanya Groq buat {len(uncertain_tables)} table..."):
+                        for t in uncertain_tables:
+                            info = doc_report[t]
+                            candidates = [c for c in doc_datasets[t].columns if c not in info["confirmed_columns"]]
+                            prep_types = sorted(
+                                {
+                                    s
+                                    for r in doc_recipes
+                                    if t in r.inputs
+                                    for s in r.prepare_step_types
+                                }
+                            )
+                            context = (
+                                f"Step transformasi yang menyentuh table ini: {', '.join(prep_types) or '-'}. "
+                                f"Kolom yang sudah pasti dipakai (dari join/group/distinct key): "
+                                f"{', '.join(sorted(info['confirmed_columns'])) or '-'}."
+                            )
+                            likely, reasoning = ask_groq_column_suggestions(t, candidates, context)
+                            suggestions[t] = {"columns": likely, "reasoning": reasoning}
+                    st.session_state[groq_key] = suggestions
+                    st.rerun()
+                except Exception as e:  # noqa: BLE001 - tampilkan apapun errornya ke user
+                    st.error(f"Gagal minta saran Groq: {e}")
 
     sel_tables = st.multiselect(
         "Pilih Table yang relevan untuk project ini",
@@ -562,10 +658,23 @@ else:  # 🧩 Seleksi Kolom
         if info is not None:
             confirmed = info["confirmed_columns"]
             uncertain = info["uncertain"]
-            cols_for_table["Sumber Dokumen"] = cols_for_table["Column DWH"].apply(
-                lambda c: "✅ confirmed" if c in confirmed else ("⚠️ cek manual" if uncertain else "📄 ikut alur")
+            ai_suggested = groq_suggestions.get(t, {}).get("columns", set())
+
+            def _sumber(c, confirmed=confirmed, uncertain=uncertain, ai_suggested=ai_suggested):
+                if c in confirmed:
+                    return "✅ confirmed"
+                if c in ai_suggested:
+                    return "🤖 saran AI (belum pasti)"
+                return "⚠️ cek manual" if uncertain else "📄 ikut alur"
+
+            cols_for_table["Sumber Dokumen"] = cols_for_table["Column DWH"].apply(_sumber)
+            default_pilih = (
+                cols_for_table["Column DWH"].isin(confirmed)
+                | cols_for_table["Column DWH"].isin(ai_suggested)
+                | (not uncertain)
             )
-            default_pilih = cols_for_table["Column DWH"].isin(confirmed) | (not uncertain)
+            if t in groq_suggestions and groq_suggestions[t].get("reasoning"):
+                st.caption(f"🤖 Alasan saran AI: {groq_suggestions[t]['reasoning']}")
         elif doc_file is not None:
             cols_for_table["Sumber Dokumen"] = "❓ table tidak ada di dokumen"
             default_pilih = True
