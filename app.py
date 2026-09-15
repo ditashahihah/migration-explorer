@@ -177,7 +177,7 @@ def pipeline_stage_counts(df_subset: pd.DataFrame) -> dict:
 # boleh mengarang nama kolom baru, supaya tidak ada hasil yang halusinasi.
 # ---------------------------------------------------------------------
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "openai/gpt-oss-120b"
 
 
 def groq_enabled() -> bool:
