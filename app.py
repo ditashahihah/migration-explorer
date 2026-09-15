@@ -13,11 +13,14 @@ Checking_Progress_Migration.xlsx. Baca README.md untuk penjelasan lengkap
 struktur data & kolomnya.
 """
 
+import io
 import shutil
 
 import pandas as pd
 import requests
 import streamlit as st
+
+from dataiku_doc import build_project_column_report, parse_dataiku_doc
 
 # ---------------------------------------------------------------------
 # Konfigurasi & konstanta
@@ -107,6 +110,13 @@ def extract_short_table(value):
     s = str(value).strip()
     last = s.split(".")[-1].strip().strip("[]").strip()
     return last.upper() if last else None
+
+
+@st.cache_data(show_spinner="Membaca dokumen Dataiku Flow (dokumen besar bisa makan waktu ~10-20 detik)...")
+def parse_uploaded_doc(file_bytes: bytes):
+    """Wrapper cached di atas parse_dataiku_doc supaya dokumen besar tidak
+    di-parse ulang tiap kali ada interaksi UI lain (checkbox, dsb)."""
+    return parse_dataiku_doc(io.BytesIO(file_bytes))
 
 
 @st.cache_data(show_spinner="Memuat data dari Excel...")
@@ -497,6 +507,39 @@ else:  # 🧩 Seleksi Kolom
     proj_df = df_f[df_f["Project"] == sel_project]
     tables_for_project = sorted(proj_df["Short Table"].dropna().unique())
 
+    with st.expander("📄 Bantu pre-fill dari Dokumen Dataiku Flow (opsional)"):
+        st.caption(
+            "Upload dokumen 'Dataiku Flow Documentation' (.docx) buat project ini. "
+            "App baca table & kolom apa saja yang benar-benar dipakai di flow-nya "
+            "(dari join key / group key / distinct key yang tertulis eksplisit di "
+            "dokumen), lalu otomatis pre-fill centang di bawah — kolom yang kena "
+            "recipe 'Prepare' (transformasi tanpa nama kolom tercatat) dibiarkan "
+            "TIDAK tercentang karena dokumennya sendiri tidak menyebut nama "
+            "kolomnya, jadi tetap perlu direview manual."
+        )
+        doc_file = st.file_uploader(
+            "Upload Dataiku Flow Documentation (.docx)", type=["docx"], key=f"selkol_doc_{sel_project}"
+        )
+
+    doc_report = {}
+    doc_datasets = {}
+    if doc_file is not None:
+        doc_datasets, doc_recipes = parse_uploaded_doc(doc_file.getvalue())
+        coretan_short_tables = set(df["Short Table"].dropna().unique())
+        doc_report = build_project_column_report(doc_datasets, doc_recipes, coretan_short_tables)
+
+        matched_in_project = [t for t in tables_for_project if t in doc_report]
+        st.success(
+            f"Dokumen terbaca: {len(doc_datasets)} dataset, {len(doc_recipes)} recipe. "
+            f"{len(matched_in_project)} dari {len(tables_for_project)} table project ini "
+            "ketemu namanya persis di dokumen (sisanya kemungkinan bukan tabel DWH "
+            "yang di-track Coretan, atau beda nama)."
+        )
+        with st.expander("🔍 Hasil ekstraksi mentah per table (nama table → daftar kolom di schema-nya)"):
+            for t in matched_in_project:
+                st.markdown(f"**{t}** ({len(doc_datasets[t].columns)} kolom di schema)")
+                st.write(", ".join(doc_datasets[t].columns) if doc_datasets[t].columns else "-")
+
     sel_tables = st.multiselect(
         "Pilih Table yang relevan untuk project ini",
         tables_for_project,
@@ -514,13 +557,28 @@ else:  # 🧩 Seleksi Kolom
             .sort_values("Column DWH")
             .reset_index(drop=True)
         )
-        cols_for_table.insert(0, "Pilih", True)
+
+        info = doc_report.get(t)
+        if info is not None:
+            confirmed = info["confirmed_columns"]
+            uncertain = info["uncertain"]
+            cols_for_table["Sumber Dokumen"] = cols_for_table["Column DWH"].apply(
+                lambda c: "✅ confirmed" if c in confirmed else ("⚠️ cek manual" if uncertain else "📄 ikut alur")
+            )
+            default_pilih = cols_for_table["Column DWH"].isin(confirmed) | (not uncertain)
+        elif doc_file is not None:
+            cols_for_table["Sumber Dokumen"] = "❓ table tidak ada di dokumen"
+            default_pilih = True
+        else:
+            cols_for_table["Sumber Dokumen"] = "-"
+            default_pilih = True
+        cols_for_table.insert(0, "Pilih", default_pilih)
 
         edited = st.data_editor(
             cols_for_table,
             hide_index=True,
             use_container_width=True,
-            disabled=["Column DWH", "Status"],
+            disabled=["Column DWH", "Status", "Sumber Dokumen"],
             key=f"selkol_editor_{sel_project}_{t}",
         )
         picked_cols = edited.loc[edited["Pilih"], "Column DWH"].tolist()
