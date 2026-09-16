@@ -178,6 +178,50 @@ def render_detail_table(df_subset: pd.DataFrame):
         st.dataframe(view, use_container_width=True, hide_index=True)
 
 
+def render_dataset_table(datasets: dict, names: list, key_prefix: str):
+    """Render daftar dataset (hasil parsing dokumen Dataiku) sebagai tabel
+    yang bisa difilter by Type & Connection, plus pilih 1 buat lihat daftar
+    kolomnya."""
+    if not names:
+        st.write("-")
+        return
+
+    table_df = pd.DataFrame(
+        [
+            {
+                "Dataset": n,
+                "Type": datasets[n].type or "-",
+                "Connection": datasets[n].connection or "-",
+                "Jumlah Kolom": len(datasets[n].columns),
+            }
+            for n in names
+        ]
+    )
+
+    type_opts = sorted(table_df["Type"].unique())
+    conn_opts = sorted(table_df["Connection"].unique())
+    c1, c2 = st.columns(2)
+    type_sel = c1.multiselect("Filter Type", type_opts, default=type_opts, key=f"{key_prefix}_type")
+    conn_sel = c2.multiselect("Filter Connection", conn_opts, default=conn_opts, key=f"{key_prefix}_conn")
+    keyword = st.text_input("Filter nama dataset", key=f"{key_prefix}_kw")
+
+    filtered = table_df[table_df["Type"].isin(type_sel) & table_df["Connection"].isin(conn_sel)]
+    if keyword:
+        filtered = filtered[filtered["Dataset"].str.upper().str.contains(keyword.strip().upper())]
+
+    st.caption(f"Menampilkan {len(filtered)} dari {len(table_df)} dataset.")
+    st.dataframe(filtered, hide_index=True, use_container_width=True)
+
+    if not filtered.empty:
+        detail_pick = st.selectbox(
+            "Lihat daftar kolom dataset",
+            ["-"] + filtered["Dataset"].tolist(),
+            key=f"{key_prefix}_detail",
+        )
+        if detail_pick != "-":
+            st.write(", ".join(datasets[detail_pick].columns) or "-")
+
+
 def pipeline_stage_counts(df_subset: pd.DataFrame) -> dict:
     """Hitung berapa kolom DWH unik di df_subset yang sampai ke tiap stage
     pipeline (Bronze/Silver) dan Hardcode/Gap. Di-dedup dulu by (Short Table,
@@ -632,13 +676,7 @@ else:  # 🧩 Seleksi Kolom
                 + " — kolomnya tetap default semua tercentang (perilaku lama), review manual."
             )
         with st.expander("🔍 Hasil ekstraksi mentah per table (nama table → daftar kolom di schema-nya)"):
-            for t in matched_in_project:
-                ds = doc_datasets[t]
-                st.markdown(
-                    f"**{t}** ({len(ds.columns)} kolom di schema) — "
-                    f"Type: `{ds.type or '-'}` | Connection: `{ds.connection or '-'}`"
-                )
-                st.write(", ".join(ds.columns) if ds.columns else "-")
+            render_dataset_table(doc_datasets, matched_in_project, key_prefix=f"matched_ds_{sel_project}")
 
         other_datasets = sorted(n for n in doc_datasets if n not in matched_in_project)
         with st.expander(
@@ -650,23 +688,7 @@ else:  # 🧩 Seleksi Kolom
                 "olahan (Type: Server's Filesystem) atau raw source yang memang "
                 "tidak di-track Coretan."
             )
-            other_keyword = st.text_input(
-                f"Ketik buat filter nama dataset ({len(other_datasets)} total)",
-                key=f"other_ds_filter_{sel_project}",
-            )
-            shown = (
-                [n for n in other_datasets if other_keyword.strip().upper() in n.upper()]
-                if other_keyword
-                else other_datasets
-            )
-            st.caption(f"Menampilkan {len(shown)} dataset.")
-            for name in shown:
-                ds = doc_datasets[name]
-                st.markdown(
-                    f"**{name}** ({len(ds.columns)} kolom di schema) — "
-                    f"Type: `{ds.type or '-'}` | Connection: `{ds.connection or '-'}`"
-                )
-                st.write(", ".join(ds.columns) if ds.columns else "-")
+            render_dataset_table(doc_datasets, other_datasets, key_prefix=f"other_ds_{sel_project}")
 
         uncertain_tables = [t for t in matched_in_project if doc_report[t]["uncertain"]]
         groq_key = f"groq_suggestions_{sel_project}"
