@@ -217,17 +217,14 @@ format yang sama):
 | Table kena recipe "Prepare" tapi kolomnya tidak confirmed | ❌ tidak tercentang | Dataiku memang tidak mencatat nama kolom spesifik yang diproses step "Prepare" (cuma jenis step-nya, misal "ColumnsSelector") — jadi tidak bisa dipastikan dari dokumen, **PIC wajib review manual** |
 | Table project ini tidak ketemu di dokumen | ✅ tercentang (perilaku lama) | Tidak ada info dari dokumen, balik ke default sebelumnya |
 
-**Saran AI (Groq) — opsional, buat kolom yang "❌ tidak tercentang" di atas:**
-kalau secret `groq_api_key` diisi (lihat `.streamlit/secrets.toml.example`,
-daftar gratis di [console.groq.com/keys](https://console.groq.com/keys)),
-muncul tombol **"🤖 Minta saran AI"**. Groq dikasih daftar kolom yang belum
-pasti + konteks (jenis step Prepare yang menyentuh table itu, kolom yang
-sudah confirmed) dan diminta milih kolom mana yang kemungkinan masih
-dipakai — **cuma boleh milih dari daftar yang dikasih, tidak boleh
-mengarang nama kolom baru** (dicek ulang di kode, bukan cuma pesan
-prompt). Hasilnya ditandai **"🤖 saran AI (belum pasti)"** di kolom "Sumber
-Dokumen" — beda label dari "✅ confirmed", supaya PIC tahu itu tebakan AI
-berdasarkan konteks, bukan fakta yang tertulis eksplisit di dokumen.
+> **Kenapa tidak ada "saran AI" buat kolom yang belum pasti itu?** Sempat
+> dicoba (lewat Groq), tapi dibatalkan: kolom yang dikirim ke AI itu
+> justru kolom yang **sudah pasti tidak punya bukti apapun** di dokumen
+> (kalau ada bukti, dia sudah masuk kategori "confirmed"). Jadi AI-nya
+> cuma bisa nebak dari pola nama kolom + pengetahuan umum — bukan dari isi
+> dokumen — dan itu berisiko menyesatkan PIC seolah-olah itu fakta.
+> Diputuskan lebih baik dibiarkan kosong & direview manual sepenuhnya
+> daripada kasih tebakan yang tidak berdasar dokumen.
 
 > Dokumen Dataiku Flow yang besar (ribuan dataset/recipe) bisa makan
 > waktu ~10-20 detik buat di-parse. Hasil parsing di-cache (`@st.cache_data`)
@@ -263,14 +260,12 @@ gampang dibaca ulang. Bagian-bagiannya:
    backend file Excel lokal (fallback + backup otomatis).
 8. **`save_project_selection()`** — dispatcher, dipanggil dari UI, milih
    backend gsheet atau lokal berdasarkan `gsheet_enabled()`.
-9. **`groq_enabled()` / `ask_groq_column_suggestions()`** — saran AI buat
-   kolom yang belum pasti dari hasil parsing dokumen Dataiku (lihat bagian 6).
-10. **`dataiku_doc.py`** (module terpisah) — parser deterministik dokumen
-    Dataiku Flow Documentation. `parse_dataiku_doc()` baca .docx jadi
-    `(datasets, recipes)`, `build_project_column_report()` ringkas jadi
-    laporan per-table siap pakai. Murni Python + `python-docx`, tanpa
-    Streamlit, jadi bisa dites terpisah.
-11. **Bagian UI** — sidebar (sumber data + filter), lalu tiga mode di atas.
+9. **`dataiku_doc.py`** (module terpisah) — parser deterministik dokumen
+   Dataiku Flow Documentation. `parse_dataiku_doc()` baca .docx jadi
+   `(datasets, recipes)`, `build_project_column_report()` ringkas jadi
+   laporan per-table siap pakai. Murni Python + `python-docx`, tanpa
+   Streamlit, jadi bisa dites terpisah.
+10. **Bagian UI** — sidebar (sumber data + filter), lalu tiga mode di atas.
 
 ### Kalau mau extend
 
@@ -434,10 +429,10 @@ WebSocket, dan Streamlit di platform manapun sama-sama butuh itu).
 ### b. Secrets
 
 Buka service → **Environment** → tambah environment variable:
-`gsheet_webapp_url`, `gsheet_webapp_token`, dan (opsional) `groq_api_key`
-— nilai sama persis kayak di `.streamlit/secrets.toml` lokal. App-nya baca
-ini lewat `get_secret()` (lihat bagian 7) yang otomatis fallback ke
-environment variable, jadi tidak perlu ubah kode apa-apa.
+`gsheet_webapp_url`, `gsheet_webapp_token` — nilai sama persis kayak di
+`.streamlit/secrets.toml` lokal. App-nya baca ini lewat `get_secret()`
+(lihat bagian 7) yang otomatis fallback ke environment variable, jadi
+tidak perlu ubah kode apa-apa.
 
 ### c. Yang perlu diingat
 
