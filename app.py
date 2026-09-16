@@ -165,7 +165,10 @@ def style_status(val):
 
 def render_detail_table(df_subset: pd.DataFrame):
     cols = [c for c in DISPLAY_COLUMNS if c in df_subset.columns]
-    view = df_subset[cols]
+    # tampilkan "-" buat stage yang belum termapping (bukan "None"/kosong) -
+    # tiap stage (Bronze/Silver1/Silver2) independen, tidak diasumsikan
+    # harus berurutan (bisa aja cuma ada Silver 2 tanpa Silver 1, dst).
+    view = df_subset[cols].fillna("-")
     if "Status" in view.columns:
         try:
             styled = view.style.map(style_status, subset=["Status"])
