@@ -607,12 +607,19 @@ else:  # 🧩 Seleksi Kolom
         doc_report = build_project_column_report(doc_datasets, doc_recipes, coretan_short_tables)
 
         matched_in_project = [t for t in tables_for_project if t in doc_report]
+        unmatched_in_project = [t for t in tables_for_project if t not in doc_report]
         st.success(
             f"Dokumen terbaca: {len(doc_datasets)} dataset, {len(doc_recipes)} recipe. "
             f"{len(matched_in_project)} dari {len(tables_for_project)} table project ini "
             "ketemu namanya persis di dokumen (sisanya kemungkinan bukan tabel DWH "
             "yang di-track Coretan, atau beda nama)."
         )
+        if unmatched_in_project:
+            st.caption(
+                f"❓ Table yang TIDAK ketemu di dokumen ({len(unmatched_in_project)}): "
+                + ", ".join(unmatched_in_project)
+                + " — kolomnya tetap default semua tercentang (perilaku lama), review manual."
+            )
         with st.expander("🔍 Hasil ekstraksi mentah per table (nama table → daftar kolom di schema-nya)"):
             for t in matched_in_project:
                 st.markdown(f"**{t}** ({len(doc_datasets[t].columns)} kolom di schema)")
