@@ -520,7 +520,14 @@ if mode == "🔎 Cari by Table":
     st.write(", ".join(projects_using) if projects_using else "-")
 
     st.subheader("📊 Detail Kolom: DWH → Bronze → Silver Tier 1 → Silver Tier 2")
-    render_detail_table(subset.sort_values(["Project", "Column DWH"]))
+    project_filter = st.multiselect(
+        "Filter by Project (kosongkan buat tampilkan semua)",
+        projects_using,
+        default=[],
+        key=f"detail_project_filter_{selected_table}",
+    )
+    detail_subset = subset[subset["Project"].isin(project_filter)] if project_filter else subset
+    render_detail_table(detail_subset.sort_values(["Project", "Column DWH"]))
 
 elif mode == "🔎 Cari by Project":
     projects = sorted(p for p in df_f["Project"].dropna().unique())
