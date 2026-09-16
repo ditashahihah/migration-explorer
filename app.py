@@ -629,8 +629,12 @@ else:  # 🧩 Seleksi Kolom
             )
         with st.expander("🔍 Hasil ekstraksi mentah per table (nama table → daftar kolom di schema-nya)"):
             for t in matched_in_project:
-                st.markdown(f"**{t}** ({len(doc_datasets[t].columns)} kolom di schema)")
-                st.write(", ".join(doc_datasets[t].columns) if doc_datasets[t].columns else "-")
+                ds = doc_datasets[t]
+                st.markdown(
+                    f"**{t}** ({len(ds.columns)} kolom di schema) — "
+                    f"Type: `{ds.type or '-'}` | Connection: `{ds.connection or '-'}`"
+                )
+                st.write(", ".join(ds.columns) if ds.columns else "-")
 
         uncertain_tables = [t for t in matched_in_project if doc_report[t]["uncertain"]]
         groq_key = f"groq_suggestions_{sel_project}"
