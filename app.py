@@ -15,6 +15,7 @@ struktur data & kolomnya.
 
 import io
 import json
+import os
 import shutil
 
 import pandas as pd
@@ -22,6 +23,29 @@ import requests
 import streamlit as st
 
 from dataiku_doc import build_project_column_report, parse_dataiku_doc
+
+
+def get_secret(name: str, default=None):
+    """Baca secret dari st.secrets (Streamlit Cloud/lokal, .streamlit/secrets.toml)
+    kalau ada, fallback ke environment variable (Hugging Face Spaces & host lain
+    yang nyimpen secrets sebagai env var, bukan secrets.toml). Ini bikin app-nya
+    portable ke berbagai platform hosting tanpa ubah kode."""
+    try:
+        if name in st.secrets:
+            return st.secrets[name]
+    except Exception:
+        pass
+    # env var lookup: coba nama persis dulu, lalu versi UPPERCASE (konvensi
+    # umum di host lain kayak Hugging Face Spaces) - env var case-sensitive
+    # di Linux, beda dari Windows yang case-insensitive.
+    if name in os.environ:
+        return os.environ[name]
+    return os.environ.get(name.upper(), default)
+
+
+def has_secret(name: str) -> bool:
+    return get_secret(name) is not None
+
 
 # ---------------------------------------------------------------------
 # Konfigurasi & konstanta
@@ -181,10 +205,7 @@ GROQ_MODEL = "openai/gpt-oss-120b"
 
 
 def groq_enabled() -> bool:
-    try:
-        return "groq_api_key" in st.secrets
-    except Exception:
-        return False
+    return has_secret("groq_api_key")
 
 
 def ask_groq_column_suggestions(table_name: str, candidate_columns: list, context_note: str) -> tuple[set, str]:
@@ -207,9 +228,9 @@ def ask_groq_column_suggestions(table_name: str, candidate_columns: list, contex
     )
     resp = requests.post(
         GROQ_API_URL,
-        headers={"Authorization": f"Bearer {st.secrets['groq_api_key']}"},
+        headers={"Authorization": f"Bearer {get_secret('groq_api_key')}"},
         json={
-            "model": st.secrets.get("groq_model", GROQ_MODEL),
+            "model": get_secret("groq_model", GROQ_MODEL),
             "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"},
             "temperature": 0,
@@ -232,21 +253,18 @@ def ask_groq_column_suggestions(table_name: str, candidate_columns: list, contex
 # Seleksi Kolom: backend Google Sheets lewat Apps Script Web App
 # ---------------------------------------------------------------------
 def gsheet_enabled() -> bool:
-    """False kalau belum ada file secrets.toml sama sekali (st.secrets
-    melempar exception, bukan dict kosong, kalau filenya tidak ada), atau
-    ada tapi key-nya belum lengkap."""
-    try:
-        return "gsheet_webapp_url" in st.secrets and "gsheet_webapp_token" in st.secrets
-    except Exception:
-        return False
+    """False kalau secret gsheet_webapp_url/gsheet_webapp_token belum diisi,
+    baik lewat secrets.toml (Streamlit Cloud/lokal) maupun environment
+    variable (host lain kayak Hugging Face Spaces)."""
+    return has_secret("gsheet_webapp_url") and has_secret("gsheet_webapp_token")
 
 
 def _appscript_call(action: str, **payload) -> dict:
     """POST ke Apps Script Web App. Apps Script selalu balas HTTP 200 (tidak
     bisa set status code custom), jadi sukses/gagal dicek dari field `ok`
     di body JSON-nya, bukan dari status code."""
-    url = st.secrets["gsheet_webapp_url"]
-    token = st.secrets["gsheet_webapp_token"]
+    url = get_secret("gsheet_webapp_url")
+    token = get_secret("gsheet_webapp_token")
     resp = requests.post(url, json={"token": token, "action": action, **payload}, timeout=20)
     resp.raise_for_status()
     data = resp.json()
