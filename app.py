@@ -585,10 +585,14 @@ else:  # 🧩 Seleksi Kolom
             "lihat README bagian setup Google Sheets.)"
         )
 
-    projects = sorted(p for p in df_f["Project"].dropna().unique())
+    # sengaja pakai df (bukan df_f) - filter sidebar (Kategori Project/Status)
+    # itu buat mode pencarian, tidak relevan buat Seleksi Kolom. Kalau ikut
+    # df_f, table yang semua kolomnya Gap bisa hilang dari pilihan cuma
+    # gara-gara filter Status di sidebar tidak nyentang "Gap".
+    projects = sorted(p for p in df["Project"].dropna().unique())
     sel_project = st.selectbox("Pilih Project", projects, key="selkol_project")
 
-    proj_df = df_f[df_f["Project"] == sel_project]
+    proj_df = df[df["Project"] == sel_project]
     tables_for_project = sorted(proj_df["Short Table"].dropna().unique())
 
     with st.expander("📄 Bantu pre-fill dari Dokumen Dataiku Flow (opsional)"):
@@ -632,6 +636,34 @@ else:  # 🧩 Seleksi Kolom
                 ds = doc_datasets[t]
                 st.markdown(
                     f"**{t}** ({len(ds.columns)} kolom di schema) — "
+                    f"Type: `{ds.type or '-'}` | Connection: `{ds.connection or '-'}`"
+                )
+                st.write(", ".join(ds.columns) if ds.columns else "-")
+
+        other_datasets = sorted(n for n in doc_datasets if n not in matched_in_project)
+        with st.expander(
+            f"📦 Dataset lain di dokumen, di luar table DWH yang di-track Coretan ({len(other_datasets)})"
+        ):
+            st.caption(
+                "Ini semua dataset yang ada di flow Dataiku ini tapi TIDAK match "
+                "nama-nya ke Short Table Coretan — biasanya dataset turunan/hasil "
+                "olahan (Type: Server's Filesystem) atau raw source yang memang "
+                "tidak di-track Coretan."
+            )
+            other_keyword = st.text_input(
+                f"Ketik buat filter nama dataset ({len(other_datasets)} total)",
+                key=f"other_ds_filter_{sel_project}",
+            )
+            shown = (
+                [n for n in other_datasets if other_keyword.strip().upper() in n.upper()]
+                if other_keyword
+                else other_datasets
+            )
+            st.caption(f"Menampilkan {len(shown)} dataset.")
+            for name in shown:
+                ds = doc_datasets[name]
+                st.markdown(
+                    f"**{name}** ({len(ds.columns)} kolom di schema) — "
                     f"Type: `{ds.type or '-'}` | Connection: `{ds.connection or '-'}`"
                 )
                 st.write(", ".join(ds.columns) if ds.columns else "-")
