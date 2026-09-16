@@ -1,7 +1,7 @@
 # Migration Progress Explorer
 
 Streamlit app kecil untuk menelusuri progress migrasi data AXA Mandiri
-(source → Bronze → Silver Tier 1 → Silver Tier 2), dengan tiga mode:
+(source → Bronze → Silver Tier 1 → Silver Tier 2), dengan empat mode:
 
 1. **Cari by Table** — pilih satu table, lihat project mana saja yang
    memakainya, lalu lihat detail tiap kolomnya sampai ke Silver Tier 2.
@@ -12,6 +12,9 @@ Streamlit app kecil untuk menelusuri progress migrasi data AXA Mandiri
    relevan → centang kolom DWH yang bener-bener dipakai project itu.
    Hasilnya disimpan ke Google Sheets atau file lokal, tergantung setup
    (lihat bagian 4 & 5).
+4. **Kelengkapan Stage** — cross-check independen DWH→Bronze→Silver1→Silver2
+   dari 3 file mapping teknis terpisah (bukan dari Coretan), bisa dicari
+   mulai dari stage manapun (lihat bagian 7).
 
 ---
 
@@ -173,7 +176,7 @@ backend (Google Sheets maupun file lokal).
 App otomatis pilih salah satu, tergantung ada tidaknya secrets Google:
 
 - **Ada secrets `gsheet_webapp_url` + `gsheet_webapp_token`** → pakai
-  **Google Sheets** (lewat Apps Script Web App, lihat bagian 8). 3 sheet
+  **Google Sheets** (lewat Apps Script Web App, lihat bagian 9). 3 sheet
   di atas jadi 3 tab di Google Sheet tujuan. Ini yang dipakai kalau app
   di-deploy ke hosting gratis karena storage container di hosting gratis
   itu sementara (ephemeral) — kalau hasil seleksi ditulis ke file Excel
@@ -232,7 +235,40 @@ format yang sama):
 
 ---
 
-## 7. Struktur kode (`app.py`)
+## 7. Mode "📈 Kelengkapan Stage" — cross-check independen dari Coretan
+
+Mode ini **tidak baca kolom Bronze/Silver yang sudah tercatat di Coretan
+sama sekali** — dihitung ulang dari nol dari 3 sumber file mapping teknis
+terpisah, buat cross-check apakah data Coretan masih sinkron dengan
+sumber teknisnya:
+
+| Step | Sumber | Isi |
+|---|---|---|
+| DWH → Bronze | `dwh_to_flat.csv` | `Target_Table`/`Target_Column` (DWH) → `Source_Table`/`Source_Column` (Bronze) |
+| Bronze → Silver 1 | `Source ke Silver 1.csv` | Kolom G/H (Bronze Table/Field) → kolom N (Proposed Table Name, prioritas) atau M (fallback) + kolom O (Physical Field NM) |
+| Silver 1 → Silver 2 | `Silver 1 ke Silver 2/*.xlsx` (7 file per domain: Application, Claim, FinAct, Party, Policy, Producer, Product) | Tiap file dicek semua sheet (kecuali "Home"), header di baris 4 — kolom B/C (Silver1 Table/Field) → kolom E/F (Silver2 Table/Physical Field). Domain = nama file yang match, berhenti di match pertama. |
+
+**Cara pakai:** pilih mau cari mulai dari stage mana (DWH/Bronze/Silver
+1/Silver 2 — **tidak harus dari DWH**), ketik nama table (& opsional nama
+kolom), hasilnya tabel lengkap dari DWH sampai Silver 2 dengan `-` buat
+stage yang tidak ketemu.
+
+**Penting soal fan-out:** satu kolom DWH bisa punya **lebih dari satu**
+mapping Bronze (misal sumber Health & Life sekaligus) — jadi wajar kalau
+1 kolom DWH muncul sebagai beberapa baris berbeda. Sebaliknya, ada juga
+entri Bronze/Silver1/Silver2 yang **"yatim"** (orphan) — ada di file
+mapping teknisnya tapi tidak ketarik dari DWH manapun di `dwh_to_flat.csv`
+— baris-baris ini tetap ditampilkan (kolom DWH/Bronze-nya jadi `-`) supaya
+pencarian dari stage Bronze/Silver1/Silver2 tetap ketemu meski tidak
+berasal dari DWH yang di-track.
+
+Fitur ini murni tampilan (cross-check), **tidak disimpan** ke Coretan
+atau sheet manapun — logic-nya ada di module terpisah `stage_mapping.py`
+(murni Python, tanpa Streamlit, bisa dites terpisah).
+
+---
+
+## 8. Struktur kode (`app.py`)
 
 File `app.py` sengaja dibuat satu file (bukan dipecah banyak modul) supaya
 gampang dibaca ulang. Bagian-bagiannya:
@@ -283,7 +319,7 @@ gampang dibaca ulang. Bagian-bagiannya:
 
 ---
 
-## 8. Deploy ke Streamlit Community Cloud (gratis)
+## 9. Deploy ke Streamlit Community Cloud (gratis)
 
 Supaya orang lain bisa akses lewat URL publik. Ada 2 tahap: (a) setup
 Google Sheets sebagai storage persisten buat mode Seleksi Kolom, (b) push
@@ -397,7 +433,7 @@ private).
 
 ---
 
-## 9. Alternatif deploy: Render (gratis, tanpa kartu kredit)
+## 10. Alternatif deploy: Render (gratis, tanpa kartu kredit)
 
 Streamlit Community Cloud butuh koneksi **WebSocket** yang kadang diblokir
 jaringan kantor/korporat (app kebuka blank/loading terus-terusan walau
@@ -431,7 +467,7 @@ WebSocket, dan Streamlit di platform manapun sama-sama butuh itu).
 Buka service → **Environment** → tambah environment variable:
 `gsheet_webapp_url`, `gsheet_webapp_token` — nilai sama persis kayak di
 `.streamlit/secrets.toml` lokal. App-nya baca ini lewat `get_secret()`
-(lihat bagian 7) yang otomatis fallback ke environment variable, jadi
+(lihat bagian 8) yang otomatis fallback ke environment variable, jadi
 tidak perlu ubah kode apa-apa.
 
 ### c. Yang perlu diingat
