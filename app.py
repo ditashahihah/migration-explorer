@@ -22,6 +22,7 @@ import requests
 import streamlit as st
 
 from dataiku_doc import build_project_column_report, parse_dataiku_doc
+from stage_mapping import build_full_lineage_table
 
 
 def get_secret(name: str, default=None):
@@ -141,6 +142,15 @@ def parse_uploaded_doc(file_bytes: bytes):
     """Wrapper cached di atas parse_dataiku_doc supaya dokumen besar tidak
     di-parse ulang tiap kali ada interaksi UI lain (checkbox, dsb)."""
     return parse_dataiku_doc(io.BytesIO(file_bytes))
+
+
+@st.cache_data(show_spinner="Membangun tabel lineage DWH → Bronze → Silver 1 → Silver 2...")
+def load_full_lineage_table() -> pd.DataFrame:
+    """Wrapper cached di atas build_full_lineage_table() - baca ulang 3
+    sumber file mapping teknis (dwh_to_flat.csv, Source ke Silver 1.csv,
+    7 file domain Silver1->Silver2) makan waktu ~1-2 detik, tidak perlu
+    diulang tiap interaksi UI."""
+    return build_full_lineage_table()
 
 
 @st.cache_data(show_spinner="Memuat data dari Excel...")
@@ -476,7 +486,7 @@ if status_opts:
 # ---- Mode pencarian ----
 mode = st.radio(
     "Mode pencarian",
-    ["🔎 Cari by Table", "🔎 Cari by Project", "🧩 Seleksi Kolom"],
+    ["🔎 Cari by Table", "🔎 Cari by Project", "🧩 Seleksi Kolom", "📈 Kelengkapan Stage"],
     horizontal=True,
 )
 st.divider()
@@ -552,7 +562,7 @@ elif mode == "🔎 Cari by Project":
     st.subheader("📊 Detail Kolom: DWH → Bronze → Silver Tier 1 → Silver Tier 2")
     render_detail_table(subset.sort_values(["Short Table", "Column DWH"]))
 
-else:  # 🧩 Seleksi Kolom
+elif mode == "🧩 Seleksi Kolom":
     if gsheet_enabled():
         st.caption(
             "Pilih project → pilih table yang relevan → centang kolom DWH yang "
@@ -723,6 +733,64 @@ else:  # 🧩 Seleksi Kolom
                     )
             except FileNotFoundError:
                 pass
+
+else:  # 📈 Kelengkapan Stage
+    st.caption(
+        "Cross-check independen kelengkapan pipeline DWH → Bronze → Silver "
+        "Tier 1 → Silver Tier 2 — dihitung ulang dari 3 file mapping teknis "
+        "terpisah (`dwh_to_flat.csv`, `Source ke Silver 1.csv`, 7 file domain "
+        "Silver1→Silver2 di folder `Silver 1 ke Silver 2/`), **BUKAN** dari "
+        "kolom Bronze/Silver yang sudah tercatat di Coretan — jadi bisa "
+        "kepakai buat cross-check apakah Coretan-nya masih sinkron. Cari "
+        "mulai dari stage manapun (tidak harus dari DWH). Satu kolom DWH "
+        "bisa punya lebih dari satu jalur (misal sumber Health & Life "
+        "sekaligus), jadi wajar kalau muncul >1 baris buat 1 kolom yang "
+        "sama. Ini murni tampilan, tidak disimpan ke mana pun."
+    )
+
+    try:
+        lineage_df = load_full_lineage_table()
+    except FileNotFoundError as e:
+        st.error(f"File sumber mapping tidak ditemukan di folder app: {e}")
+        st.stop()
+
+    stage_col_map = {
+        "DWH": ("DWH Table", "DWH Column"),
+        "Bronze": ("Bronze Table", "Bronze Column"),
+        "Silver 1": ("Silver1 Table", "Silver1 Column"),
+        "Silver 2": ("Silver2 Table", "Silver2 Column"),
+    }
+    stage_pick = st.radio(
+        "Cari mulai dari stage", list(stage_col_map.keys()), horizontal=True, key="stage_search_from"
+    )
+    table_col, col_col = stage_col_map[stage_pick]
+
+    c1, c2 = st.columns(2)
+    table_kw = c1.text_input(f"Nama table di stage {stage_pick}", key="stage_table_kw")
+    col_kw = c2.text_input(f"Nama kolom di stage {stage_pick} (opsional)", key="stage_col_kw")
+
+    domain_opts = sorted(d for d in lineage_df["Domain"].unique() if d != "-")
+    domain_sel = st.multiselect("Filter Domain (kosongkan buat semua)", domain_opts, default=[], key="stage_domain")
+
+    filtered = lineage_df
+    if table_kw:
+        filtered = filtered[filtered[table_col].str.upper().str.contains(table_kw.strip().upper(), na=False)]
+    if col_kw:
+        filtered = filtered[filtered[col_col].str.upper().str.contains(col_kw.strip().upper(), na=False)]
+    if domain_sel:
+        filtered = filtered[filtered["Domain"].isin(domain_sel)]
+
+    with_dwh = filtered[filtered["DWH Table"] != "-"]
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Jumlah Baris Jalur", len(filtered))
+    c2.metric(
+        "Kombinasi DWH Table.Column Unik",
+        with_dwh[["DWH Table", "DWH Column"]].drop_duplicates().shape[0] if not with_dwh.empty else 0,
+    )
+    c3.metric("Sampai Silver 2", int((filtered["Silver2 Table"] != "-").sum()))
+
+    st.dataframe(filtered, hide_index=True, use_container_width=True)
 
 st.divider()
 with st.expander("ℹ️ Keterangan warna Status"):
