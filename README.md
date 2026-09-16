@@ -1,19 +1,3 @@
----
-title: Migration Progress Explorer
-emoji: 🔍
-colorFrom: blue
-colorTo: indigo
-sdk: streamlit
-sdk_version: "1.63.0"
-app_file: app.py
-pinned: false
----
-
-<!-- Blok YAML di atas itu konfigurasi buat Hugging Face Spaces (baca bagian
-9 di bawah) - HF Spaces MEWAJIBKAN blok ini persis di baris pertama
-README.md. Kalau dilihat di GitHub, blok ini cuma tampil sebagai teks biasa,
-tidak masalah. -->
-
 # Migration Progress Explorer
 
 Streamlit app kecil untuk menelusuri progress migrasi data AXA Mandiri
@@ -418,57 +402,53 @@ private).
 
 ---
 
-## 9. Alternatif deploy: Hugging Face Spaces (gratis, tanpa kartu kredit)
+## 9. Alternatif deploy: Render (gratis, tanpa kartu kredit)
 
 Streamlit Community Cloud butuh koneksi **WebSocket** yang kadang diblokir
 jaringan kantor/korporat (app kebuka blank/loading terus-terusan walau
 app-nya sendiri sehat — coba akses dari jaringan lain buat mastiin ini
-penyebabnya). Kalau kena kasus ini, Hugging Face Spaces adalah alternatif
-gratis dengan infrastruktur beda — ada kemungkinan tidak kena block yang
-sama (walau **tidak dijamin**, karena akar masalahnya tetap WebSocket, dan
-Streamlit di platform manapun sama-sama butuh itu).
+penyebabnya). Kalau kena kasus ini, [Render](https://render.com) adalah
+alternatif gratis dengan infrastruktur beda — ada kemungkinan tidak kena
+block yang sama (walau **tidak dijamin**, karena akar masalahnya tetap
+WebSocket, dan Streamlit di platform manapun sama-sama butuh itu).
 
-### a. Bikin Space
+> **Catatan:** Hugging Face Spaces sempat jadi kandidat, tapi per
+> pengecekan terakhir SDK Streamlit/Docker di sana sudah **butuh
+> subscription PRO** (cuma "Static" — HTML/JS tanpa server — yang masih
+> gratis, tidak cocok buat Streamlit). Render dipilih sebagai gantinya
+> karena masih ada free tier beneran buat Python web service.
 
-1. Daftar akun gratis di [huggingface.co/join](https://huggingface.co/join)
-   — cukup email, tanpa kartu kredit.
-2. Klik **"New Space"** (dari halaman profil → tab "Spaces", atau
-   [huggingface.co/new-space](https://huggingface.co/new-space)).
-3. Isi nama Space, pilih **SDK: Streamlit**, visibility **Public**, klik
-   **Create Space**.
-4. Halaman Space yang baru dibuat bakal kasih URL git remote-nya, bentuknya
-   `https://huggingface.co/spaces/<username>/<nama-space>`.
+### a. Bikin Web Service di Render
 
-### b. Push kode ke Space
+1. Daftar akun gratis di [render.com](https://render.com) (bisa pakai
+   akun GitHub, tanpa kartu kredit).
+2. Dashboard → **New** → **Web Service** → connect ke repo
+   `migration-explorer` di GitHub Anda (kasih Render akses ke repo itu
+   kalau diminta).
+3. Render bakal otomatis detect file `render.yaml` di root repo ini dan
+   isi konfigurasinya (build command, start command, plan **Free**) — cek
+   sekilas lalu klik **Deploy Web Service**.
+4. Tunggu proses build (~2-5 menit buat install dependencies pertama
+   kali), nanti dapat URL `https://<nama-service>.onrender.com`.
 
-Repo ini sudah siap (README.md-nya sudah ada blok konfigurasi YAML yang
-dibutuhkan HF Spaces di baris paling atas). Dari folder `apps/streamlit-checking`:
+### b. Secrets
 
-```bash
-git remote add hf https://huggingface.co/spaces/<username>/<nama-space>
-git push hf main
-```
+Buka service → **Environment** → tambah environment variable:
+`gsheet_webapp_url`, `gsheet_webapp_token`, dan (opsional) `groq_api_key`
+— nilai sama persis kayak di `.streamlit/secrets.toml` lokal. App-nya baca
+ini lewat `get_secret()` (lihat bagian 7) yang otomatis fallback ke
+environment variable, jadi tidak perlu ubah kode apa-apa.
 
-(Kalau diminta login, HF pakai access token bukan password biasa — bikin
-di [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens),
-pilih tipe "Write".)
+### c. Yang perlu diingat
 
-### c. Secrets
-
-Buka Space → **Settings** → **Variables and secrets** → **New secret**,
-tambahkan `gsheet_webapp_url`, `gsheet_webapp_token`, dan (opsional)
-`groq_api_key` — nilai sama persis kayak yang di `.streamlit/secrets.toml`
-lokal. App-nya baca secrets ini lewat `get_secret()` (lihat bagian 7),
-yang otomatis fallback ke environment variable — jadi tidak perlu ubah
-kode apa-apa buat pindah platform.
-
-### d. Yang beda dari Streamlit Cloud
-
-- URL-nya bentuknya `https://<username>-<nama-space>.hf.space` (bisa dicek
-  di halaman Space-nya).
-- Space bisa "sleep" juga kalau jarang diakses (mirip Streamlit Cloud),
-  first-load abis sleep bakal agak lambat.
-- Push commit baru ke remote `hf` buat update app-nya (sama seperti push ke
-  GitHub buat Streamlit Cloud) — 2 remote ini independen, jadi kalau mau
-  kedua platform selalu sinkron, push ke keduanya tiap ada perubahan:
-  `git push origin main && git push hf main`.
+- Free tier Render **sleep kalau nganggur 15 menit** — first load abis
+  sleep butuh waktu buat bangun (mirip Streamlit Cloud).
+- Koneksi WebSocket individual di free tier di-drop tiap 5 menit —
+  Streamlit auto-reconnect bawaan biasanya nutup celah ini (paling kelihatan
+  kedip sebentar), tapi kalau kerasa mengganggu pas dipakai lama, itu
+  penyebabnya.
+- Render otomatis redeploy tiap ada push baru ke branch yang di-connect
+  (`main`) — tidak perlu langkah manual tambahan tiap update kode.
+- File `render.yaml` di root repo ini sudah nentuin semuanya (build +
+  start command) — kalau mau ubah (misal ganti nama service), edit file
+  itu langsung.
