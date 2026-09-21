@@ -220,6 +220,12 @@ format yang sama):
 | Table kena recipe "Prepare" tapi kolomnya tidak confirmed | ❌ tidak tercentang | Dataiku memang tidak mencatat nama kolom spesifik yang diproses step "Prepare" (cuma jenis step-nya, misal "ColumnsSelector") — jadi tidak bisa dipastikan dari dokumen, **PIC wajib review manual** |
 | Table project ini tidak ketemu di dokumen | ✅ tercentang (perilaku lama) | Tidak ada info dari dokumen, balik ke default sebelumnya |
 
+Kolom **"Sumber Dokumen"** di tabel checklist-nya cuma nampilin 2 label
+(disederhanakan, biar PIC tidak perlu mikirin alasan teknisnya) —
+**"✅ confirmed"** (baris pertama di atas) atau **"⚠️ perlu confirm"**
+(gabungan 3 baris sisanya: ikut alur/cek manual/table tidak ketemu).
+Default centangnya sendiri TIDAK berubah, tetap ngikutin tabel di atas.
+
 > **Kenapa tidak ada "saran AI" buat kolom yang belum pasti itu?** Sempat
 > dicoba (lewat Groq), tapi dibatalkan: kolom yang dikirim ke AI itu
 > justru kolom yang **sudah pasti tidak punya bukti apapun** di dokumen

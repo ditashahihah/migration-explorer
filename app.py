@@ -677,15 +677,13 @@ elif mode == "🧩 Seleksi Kolom":
             confirmed = info["confirmed_columns"]
             uncertain = info["uncertain"]
 
-            def _sumber(c, confirmed=confirmed, uncertain=uncertain):
-                if c in confirmed:
-                    return "✅ confirmed"
-                return "⚠️ cek manual" if uncertain else "📄 ikut alur"
+            def _sumber(c, confirmed=confirmed):
+                return "✅ confirmed" if c in confirmed else "⚠️ perlu confirm"
 
             cols_for_table["Sumber Dokumen"] = cols_for_table["Column DWH"].apply(_sumber)
             default_pilih = cols_for_table["Column DWH"].isin(confirmed) | (not uncertain)
         elif doc_file is not None:
-            cols_for_table["Sumber Dokumen"] = "❓ table tidak ada di dokumen"
+            cols_for_table["Sumber Dokumen"] = "⚠️ perlu confirm"
             default_pilih = True
         else:
             cols_for_table["Sumber Dokumen"] = "-"
