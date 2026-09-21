@@ -625,6 +625,21 @@ elif mode == "🧩 Seleksi Kolom":
             "ketemu namanya persis di dokumen (sisanya kemungkinan bukan tabel DWH "
             "yang di-track Coretan, atau beda nama)."
         )
+
+        total_columns = sum(len(ds.columns) for ds in doc_datasets.values())
+        input_datasets = {n for r in doc_recipes for n in r.inputs}
+        output_datasets = {n for r in doc_recipes for n in r.outputs}
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Table", len(doc_datasets))
+        m2.metric("Total Kolom", total_columns)
+        m3.metric("Jadi Input Recipe", len(input_datasets))
+        m4.metric("Jadi Output Recipe", len(output_datasets))
+        st.caption(
+            "Dihitung di level dataset (bukan kolom formula) — dataset yang jadi INPUT "
+            "sekaligus OUTPUT (dataset perantara di tengah flow) dihitung di dua-duanya, "
+            "jadi totalnya bisa lebih besar dari jumlah dataset unik."
+        )
+
         if unmatched_in_project:
             st.caption(
                 f"❓ Table yang TIDAK ketemu di dokumen ({len(unmatched_in_project)}): "
