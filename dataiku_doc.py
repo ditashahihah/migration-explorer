@@ -88,12 +88,25 @@ def _skip_empty_paragraphs(items, j):
 
 
 def _collect_row_tables(items, start, header_first_cell):
-    """Baca beruntun tabel satu-baris (boleh diselingi paragraf kosong)
-    mulai `start`, skip tabel header pertama kalau cell pertamanya cocok
-    `header_first_cell`. Return (list_of_row_cells, index_setelahnya)."""
-    rows, j = [], start
+    """Baca baris-baris tabel (Column Name/Type/dst) mulai `start`. Dataiku
+    punya 2 varian format ekspor dokumen buat ini:
+    - versi lama: beruntun tabel SATU-BARIS (boleh diselingi paragraf
+      kosong), tabel pertama adalah header.
+    - versi baru: SATU tabel multi-baris, baris pertamanya header.
+    Deteksi otomatis dari jumlah baris tabel pertama yang ditemukan.
+    Return (list_of_row_cells, index_setelahnya)."""
+    j = _skip_empty_paragraphs(items, start)
     n = len(items)
-    j = _skip_empty_paragraphs(items, j)
+    if j < n and isinstance(items[j], Table) and len(items[j].rows) > 1:
+        # versi baru: satu tabel multi-baris, baris pertama = header
+        rows = [
+            [c.text.strip() for c in r.cells]
+            for r in items[j].rows
+            if r.cells and r.cells[0].text.strip() != header_first_cell
+        ]
+        return rows, j + 1
+
+    rows = []
     if j < n and isinstance(items[j], Table):
         first_row = [c.text.strip() for c in items[j].rows[0].cells]
         if first_row[:1] == [header_first_cell]:
