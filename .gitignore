@@ -7,3 +7,7 @@ __pycache__/
 
 # Backup otomatis dari mode Seleksi Kolom (artefak lokal, tidak perlu di-commit)
 *.xlsx.bak
+
+# Dokumen Dataiku Flow Documentation lokal buat testing - tidak dipakai app
+# (upload manual tiap sesi), dan isinya dokumentasi flow asli, jangan ke git.
+*.docx
