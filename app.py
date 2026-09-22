@@ -599,12 +599,13 @@ elif mode == "🧩 Seleksi Kolom":
     with st.expander("📄 Bantu pre-fill dari Dokumen Dataiku Flow (opsional)"):
         st.caption(
             "Upload dokumen 'Dataiku Flow Documentation' (.docx) buat project ini. "
-            "App baca table & kolom apa saja yang benar-benar dipakai di flow-nya "
-            "(dari join key / group key / distinct key yang tertulis eksplisit di "
-            "dokumen), lalu otomatis pre-fill centang di bawah — kolom yang kena "
-            "recipe 'Prepare' (transformasi tanpa nama kolom tercatat) dibiarkan "
-            "TIDAK tercentang karena dokumennya sendiri tidak menyebut nama "
-            "kolomnya, jadi tetap perlu direview manual."
+            "Buat tiap table, kolomnya digabung dari 2 sumber: yang tercatat di "
+            "Coretan (DWH) dan yang ada di schema dataset ini di dokumen (khusus "
+            "dataset yang berperan sebagai INPUT recipe, bukan output/perantara) "
+            "— lalu ditandai kolom itu ada di DWH & Dokumen, cuma di DWH, atau "
+            "cuma di Dokumen. Default kecentang kalau kolomnya ada di DWH; kolom "
+            "yang cuma ada di Dokumen (belum tercatat di Coretan) default TIDAK "
+            "kecentang dan tetap perlu direview manual sebelum ditambah ke Coretan."
         )
         doc_file = st.file_uploader(
             "Upload Dataiku Flow Documentation (.docx)", type=["docx"], key=f"selkol_doc_{sel_project}"
@@ -612,6 +613,7 @@ elif mode == "🧩 Seleksi Kolom":
 
     doc_report = {}
     doc_datasets = {}
+    input_datasets = set()
     if doc_file is not None:
         doc_datasets, doc_recipes = parse_uploaded_doc(doc_file.getvalue())
         coretan_short_tables = set(df["Short Table"].dropna().unique())
@@ -676,40 +678,67 @@ elif mode == "🧩 Seleksi Kolom":
         key=f"selkol_tables_{sel_project}",
     )
 
+    def _norm_col(s) -> str:
+        """Normalisasi nama kolom buat dibandingkan - Coretan sering nyimpen
+        Column DWH dengan bracket SQL Server (mis. '[OWN_MOBILE_PH]'), sedangkan
+        schema di dokumen Dataiku polos tanpa bracket. Tanpa normalisasi ini,
+        kolom yang sebenarnya sama bakal keliatan cuma-di-DWH DAN cuma-di-
+        Dokumen secara terpisah."""
+        return str(s).strip().strip("[]").strip().upper()
+
+    def _keterangan(in_dwh: bool, in_doc: bool) -> str:
+        if in_dwh and in_doc:
+            return "✅ Ada di DWH & Dokumen"
+        if in_dwh:
+            return "📗 Ada di DWH, tidak di Dokumen"
+        return "📄 Ada di Dokumen, tidak di DWH"
+
     picked_frames = []
     for t in sel_tables:
         st.markdown(f"**📄 {t}**")
-        cols_for_table = (
+        dwh_rows = (
             proj_df[proj_df["Short Table"] == t][["Column DWH", "Status"]]
             .dropna(subset=["Column DWH"])
             .drop_duplicates()
-            .sort_values("Column DWH")
-            .reset_index(drop=True)
         )
+        dwh_status = dict(zip(dwh_rows["Column DWH"], dwh_rows["Status"]))
+        dwh_norm = {_norm_col(c): c for c in dwh_status}
 
-        info = doc_report.get(t)
-        if info is not None:
-            confirmed = info["confirmed_columns"]
-            uncertain = info["uncertain"]
+        doc_cols = set()
+        ds = doc_datasets.get(t)
+        if ds is not None and t in input_datasets:
+            doc_cols = set(ds.columns)
+        doc_norm = {_norm_col(c): c for c in doc_cols}
 
-            def _sumber(c, confirmed=confirmed):
-                return "✅ confirmed" if c in confirmed else "⚠️ perlu confirm"
-
-            cols_for_table["Sumber Dokumen"] = cols_for_table["Column DWH"].apply(_sumber)
-            default_pilih = cols_for_table["Column DWH"].isin(confirmed) | (not uncertain)
-        elif doc_file is not None:
-            cols_for_table["Sumber Dokumen"] = "⚠️ perlu confirm"
-            default_pilih = True
-        else:
-            cols_for_table["Sumber Dokumen"] = "-"
-            default_pilih = True
+        all_norm = sorted(set(dwh_norm) | set(doc_norm))
+        rows = []
+        for n in all_norm:
+            in_dwh, in_doc = n in dwh_norm, n in doc_norm
+            label = dwh_norm[n] if in_dwh else doc_norm[n]
+            rows.append(
+                {
+                    "Column DWH": label,
+                    "Status": dwh_status.get(label, "-") if in_dwh else "-",
+                    "Keterangan": _keterangan(in_dwh, in_doc),
+                }
+            )
+        cols_for_table = pd.DataFrame(rows, columns=["Column DWH", "Status", "Keterangan"])
+        default_pilih = cols_for_table["Column DWH"].apply(lambda c: _norm_col(c) in dwh_norm)
         cols_for_table.insert(0, "Pilih", default_pilih)
+
+        doc_only_count = len(set(doc_norm) - set(dwh_norm))
+        if doc_only_count:
+            st.caption(
+                f"📄 {doc_only_count} kolom cuma ada di Dokumen (belum tercatat "
+                "di Coretan) — centang di sini TIDAK otomatis nambah ke Coretan, cuma "
+                "penanda buat direview & ditambah manual kalau memang relevan."
+            )
 
         edited = st.data_editor(
             cols_for_table,
             hide_index=True,
             use_container_width=True,
-            disabled=["Column DWH", "Status", "Sumber Dokumen"],
+            disabled=["Column DWH", "Status", "Keterangan"],
             key=f"selkol_editor_{sel_project}_{t}",
         )
         picked_cols = edited.loc[edited["Pilih"], "Column DWH"].tolist()
