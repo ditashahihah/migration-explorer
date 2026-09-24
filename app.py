@@ -324,13 +324,25 @@ elif mode == "🧩 Info Table by Project":
 
     with st.expander("📄 Upload dump Dataiku Flow (JSON, opsional)"):
         st.caption(
-            "Upload dump JSON dari `dump_flow_via_notebook.py`/`export_code.txt`. "
-            "Buat tiap table, kolomnya digabung dari 2 sumber: yang tercatat di "
-            "Coretan (DWH) dan yang confirmed dipakai di recipe Dataiku — lalu "
-            "ditandai ada di DWH & dipakai di Dataiku, cuma di DWH, atau cuma di "
-            "Dataiku. Default kecentang kalau ADA DI DWH DAN dipakai di Dataiku; "
-            "sisanya perlu direview manual dulu."
+            "Upload dump JSON dari `export_code.py` (jalanin di notebook Dataiku, "
+            "belum punya scriptnya? download dulu di tombol bawah). Buat tiap "
+            "table, kolomnya digabung dari 2 sumber: yang tercatat di Coretan "
+            "(DWH) dan yang confirmed dipakai di recipe Dataiku — lalu ditandai "
+            "ada di DWH & dipakai di Dataiku, cuma di DWH, atau cuma di Dataiku. "
+            "Default kecentang kalau ADA DI DWH DAN dipakai di Dataiku; sisanya "
+            "perlu direview manual dulu."
         )
+        try:
+            with open("export_code.py", "rb") as f:
+                st.download_button(
+                    "⬇️ Download export_code.py",
+                    f.read(),
+                    file_name="export_code.py",
+                    mime="text/x-python",
+                    help="Jalanin script ini di notebook Dataiku (bukan recipe) buat generate dump JSON-nya.",
+                )
+        except FileNotFoundError:
+            pass
         doc_file = st.file_uploader(
             "Upload dump (.json)",
             type=["json"],

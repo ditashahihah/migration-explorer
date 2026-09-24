@@ -397,6 +397,20 @@ def render_info_mode():
                 className="mb-2",
                 style={"maxWidth": "400px"},
             ),
+            dbc.Button(
+                "⬇️ Download export_code.py",
+                id="info-download-script-btn",
+                color="secondary",
+                outline=True,
+                size="sm",
+                className="mb-2",
+            ),
+            dcc.Download(id="info-download-script"),
+            html.P(
+                "Jalanin script ini di notebook Dataiku (bukan recipe) buat generate dump JSON-nya.",
+                className="text-muted",
+                style={"fontSize": "12.5px"},
+            ),
             dcc.Upload(
                 id="info-upload",
                 children=html.Div(["Drag & drop atau ", html.A("klik buat pilih file (.json)")]),
@@ -409,6 +423,17 @@ def render_info_mode():
             html.Div(id="info-mode-body"),
         ]
     )
+
+
+@app.callback(
+    Output("info-download-script", "data"),
+    Input("info-download-script-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def download_export_script(n_clicks):
+    if not n_clicks:
+        raise PreventUpdate
+    return dcc.send_file("export_code.py")
 
 
 def _parse_doc_contents(contents: str, filename: str):
