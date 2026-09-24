@@ -531,11 +531,14 @@ def update_info_mode(sel_project, doc_store):
         html.H5("🧩 Kolom yang dipakai di Dataiku per table", className="mt-3"),
         dbc.Select(
             id="info-conn-filter",
-            options=[{"label": "Semua Connection", "value": "__all__"}]
+            options=[
+                {"label": "Table Project Ini (DWH)", "value": "__project__"},
+                {"label": "Semua Connection (semua table, termasuk EDM dll)", "value": "__all__"},
+            ]
             + [{"label": c, "value": c} for c in conn_opts],
-            value="__all__",
+            value="__project__",
             className="mb-2",
-            style={"maxWidth": "350px"},
+            style={"maxWidth": "420px"},
         ),
         html.Div(id="info-table-area"),
     ]
@@ -557,12 +560,14 @@ def update_info_table(sel_project, doc_store, conn_filter):
     dataset_meta = doc_store.get("dataset_meta", {})
     proj_df = df[df["Project"] == sel_project]
     tables_for_project = sorted(proj_df["Short Table"].dropna().unique())
+    all_tables_pool = sorted(set(tables_for_project) | set(table_confirmed_map))
 
-    if conn_filter and conn_filter != "__all__":
-        # Filter connection spesifik dipilih - perluas pool ke SEMUA table
-        # yang confirmed dipakai (termasuk EDM/dataset lain di luar Coretan
-        # project ini), baru disaring by connection.
-        all_tables_pool = sorted(set(tables_for_project) | set(table_confirmed_map))
+    if conn_filter == "__all__":
+        tables_to_show = all_tables_pool
+    elif conn_filter and conn_filter != "__project__":
+        # Connection spesifik dipilih - saring dari SEMUA table (termasuk
+        # EDM/dataset lain di luar Coretan project ini), bukan cuma yang
+        # di-track project ini.
         tables_to_show = [
             t for t in all_tables_pool if (dataset_meta.get(t, {}).get("connection") or "-") == conn_filter
         ]
@@ -574,6 +579,7 @@ def update_info_table(sel_project, doc_store, conn_filter):
         union_df = build_table_union(proj_df, table_confirmed_map, t)
         if union_df.empty:
             continue
+        union_df.insert(0, "Connection", dataset_meta.get(t, {}).get("connection") or "-")
         union_df.insert(0, "Short Table", t)
         frames.append(union_df)
 
