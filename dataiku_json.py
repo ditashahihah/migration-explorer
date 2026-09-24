@@ -1,22 +1,10 @@
 """
-Parser buat dump JSON dari `dump_flow_via_notebook.py` (alternatif dari
-`dataiku_doc.py` yang parse .docx "Dataiku Flow Documentation").
+Parser buat dump JSON dari `export_code.py` (dijalanin di notebook Dataiku -
+lihat docstring file itu buat cara pakainya).
 
-KENAPA ADA INI: export .docx butuh `python-docx`, yang TIDAK tersedia di
-Snowflake Anaconda channel - jadi kalau app ini pindah ke Streamlit in
-Snowflake, upload .docx nggak bisa dipakai. Dump JSON ini cuma butuh
-`dataiku` API standar buat di-generate (lihat dump_flow_via_notebook.py),
-dan file JSON-nya sendiri nggak butuh library eksternal buat di-parse.
-
-Reuse dataclass Dataset/Recipe dari dataiku_doc.py (parser .docx lama, sudah
-tidak dipakai buat parsing lagi - dukungan .docx sudah dihapus dari app,
-JSON-only sekarang) supaya struktur datanya tetap konsisten.
-
-BONUS dibanding docx: raw JSON recipe (payload) Dataiku ternyata nyimpen
-kolom SPESIFIK yang dipakai tiap recipe per tipe (bukan cuma "kena Prepare,
-nggak tau kolomnya" kayak di docx). Semua struktur di bawah ini divalidasi
-langsung lawan dump asli (export_ecm.json, 211 recipe/13 tipe), bukan
-tebakan dari dokumentasi API:
+Semua struktur di bawah ini divalidasi langsung lawan dump asli (export_ecm.json,
+211 recipe/13 tipe), bukan tebakan dari dokumentasi API - raw JSON recipe
+(payload) Dataiku nyimpen kolom SPESIFIK yang dipakai tiap recipe per tipe:
 
 - Join/VStack   -> payload["selectedColumns"] (Join: per-item ada "table"
   index ke recipe.inputs; VStack: flat list, berlaku sama ke SEMUA input
@@ -45,8 +33,31 @@ Yang TETAP "uncertain" (genuinely nggak ada info kolom terstruktur):
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 
-from dataiku_doc import Dataset, Recipe
+
+@dataclass
+class Dataset:
+    name: str
+    type: str = ""
+    connection: str = ""
+    columns: list = field(default_factory=list)
+
+
+@dataclass
+class Recipe:
+    name: str
+    type: str = ""
+    inputs: list = field(default_factory=list)
+    outputs: list = field(default_factory=list)
+    # dataset_name -> set kolom yang confirmed dipakai recipe ini
+    confirmed_columns: dict = field(default_factory=dict)
+    prepare_step_types: list = field(default_factory=list)
+
+    def _add_confirmed(self, dataset_name: str, cols):
+        bucket = self.confirmed_columns.setdefault(dataset_name, set())
+        bucket.update(c for c in cols if c)
+
 
 PREPARE_LIKE_TYPES = {"prepare", "shaker"}
 PASS_THROUGH_TYPES = {"sampling", "split", "sync"}
@@ -215,11 +226,11 @@ def _flatten_refs(io_roles) -> list:
 
 def _normalize_raw(raw: dict) -> dict:
     """Terima 2 kemungkinan bentuk file:
-    - format baru (dump_flow_via_notebook.py): {"datasets": {...}, "recipes": {...}}
+    - format baru (export_code.py): {"datasets": {...}, "recipes": {...}}
       dengan tiap recipe udah ada "inputs"/"outputs" flat.
-    - format lama (dump_recipes_via_notebook.py di dataiku_migrator, recipe-only):
-      {nama_recipe: {"type","definition","payload"/"code"}, ...} langsung di
-      top-level, TANPA info dataset, dan inputs/outputs masih nested di
+    - format lama (recipe-only, dari script versi sebelumnya): {nama_recipe:
+      {"type","definition","payload"/"code"}, ...} langsung di top-level,
+      TANPA info dataset, dan inputs/outputs masih nested di
       definition.inputs/outputs (butuh di-flatten dulu).
     Return selalu dalam bentuk {"datasets": {...}, "recipes": {...}} yang flat."""
     if "recipes" in raw or "datasets" in raw:
@@ -242,13 +253,12 @@ def _normalize_raw(raw: dict) -> dict:
 
 
 def parse_dataiku_json(file_or_path) -> tuple[dict, list]:
-    """Parse file JSON hasil dump_flow_via_notebook.py (format baru) ATAU
-    dump_recipes_via_notebook.py (format lama, recipe-only - dideteksi &
-    dinormalisasi otomatis lewat _normalize_raw, tapi TANPA info dataset
-    Type/Connection/Schema karena memang tidak ada di format lama itu).
+    """Parse file JSON hasil export_code.py (format baru, ada info dataset)
+    ATAU format recipe-only lama (dideteksi & dinormalisasi otomatis lewat
+    _normalize_raw, tapi TANPA info dataset Type/Connection/Schema karena
+    memang tidak ada di format lama itu).
 
-    Return (datasets, recipes) - format identik dengan parse_dataiku_doc()
-    di dataiku_doc.py, jadi bisa dipakai bergantian.
+    Return (datasets, recipes).
     """
     if hasattr(file_or_path, "read"):
         raw = json.load(file_or_path)

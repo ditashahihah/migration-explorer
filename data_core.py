@@ -166,11 +166,10 @@ def keterangan_label(in_dwh: bool, in_used: bool) -> str:
 
 
 def build_table_confirmed_map(doc_recipes: list) -> dict:
-    """Ubah list Recipe (dataclass, hasil parse_dataiku_doc/json) jadi dict
-    polos {table: {column: [nama_recipe, ...]}} - JSON-serializable (bisa
-    disimpan di dcc.Store buat Dash), dan jadi input buat build_table_union()
-    di bawah supaya kedua UI (Streamlit & Dash) pakai fungsi union yang sama
-    tanpa perlu passing objek Recipe langsung."""
+    """Ubah list Recipe (dataclass, hasil parse_dataiku_json) jadi dict polos
+    {table: {column: [nama_recipe, ...]}} - JSON-serializable (bisa disimpan
+    di dcc.Store buat Dash), dan jadi input buat build_table_union() di
+    bawah tanpa perlu passing objek Recipe langsung."""
     result: dict[str, dict[str, list]] = {}
     for r in doc_recipes:
         for table, cols in r.confirmed_columns.items():
