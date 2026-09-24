@@ -456,19 +456,20 @@ def parse_uploaded(contents, filename):
     return store, status
 
 
-DEFAULT_CONN_KEYWORDS = ("DWH", "EDM", "BICC")
+# Connection yang dipakai di seluruh mode "Info Table by Project" - table
+# dari connection lain (mis. AMFS_dataset, MPI_DATAMART) di-exclude TOTAL
+# (bukan cuma disembunyiin di default), nggak muncul sama sekali di filter,
+# metric, atau tabel union manapun.
+ALLOWED_CONN_KEYWORDS = ("DWH", "EDM", "BICC")
 
 
 def _conn_of(t: str, dataset_meta: dict) -> str:
     return (dataset_meta.get(t, {}).get("connection") or "-").upper()
 
 
-def _default_tables_pool(all_tables_pool: list, dataset_meta: dict) -> list:
-    """Table dari connection DWH/EDM/BICC aja (exclude mis. AMFS_dataset,
-    MPI_DATAMART) - dipakai buat default tampilan tabel union DAN buat
-    metric Total Table/Kolom di atasnya, biar dua-duanya selalu konsisten."""
+def _allowed_tables_pool(all_tables_pool: list, dataset_meta: dict) -> list:
     return [
-        t for t in all_tables_pool if any(k in _conn_of(t, dataset_meta) for k in DEFAULT_CONN_KEYWORDS)
+        t for t in all_tables_pool if any(k in _conn_of(t, dataset_meta) for k in ALLOWED_CONN_KEYWORDS)
     ]
 
 
@@ -515,18 +516,16 @@ def update_info_mode(sel_project, doc_store):
         n for n in dataset_meta if n not in matched_in_project and "EDM" in (dataset_meta[n].get("connection") or "").upper()
     )
 
-    # Pool connection buat filter: dari table project ini (DWH) DAN dari
-    # semua table lain yang confirmed dipakai di Dataiku (termasuk EDM) -
-    # biar "Filter Connection" bisa dipakai buat munculin table EDM juga.
-    all_tables_pool = sorted(set(tables_for_project) | set(table_confirmed_map))
+    # Pool connection: table project ini (DWH) DAN semua table lain yang
+    # confirmed dipakai di Dataiku (termasuk EDM), TAPI cuma yang connection-
+    # nya DWH/EDM/BICC - AMFS_dataset/MPI_DATAMART/dll dibuang total.
+    raw_pool = sorted(set(tables_for_project) | set(table_confirmed_map))
+    all_tables_pool = _allowed_tables_pool(raw_pool, dataset_meta) if dataset_meta else list(table_confirmed_map)
     conn_opts = sorted({dataset_meta.get(t, {}).get("connection") or "-" for t in all_tables_pool})
 
-    # Total Table/Kolom ikut scope DEFAULT (DWH+EDM+BICC) - konsisten sama
-    # tabel union di bawah yang defaultnya juga cuma nampilin connection itu.
-    default_pool = _default_tables_pool(all_tables_pool, dataset_meta) if dataset_meta else list(table_confirmed_map)
-    total_table = len(default_pool)
-    total_kolom = sum(len(dataset_meta.get(t, {}).get("columns") or []) for t in default_pool) or len(
-        {(t, c) for t in default_pool for c in table_confirmed_map.get(t, {})}
+    total_table = len(all_tables_pool)
+    total_kolom = sum(len(dataset_meta.get(t, {}).get("columns") or []) for t in all_tables_pool) or len(
+        {(t, c) for t in all_tables_pool for c in table_confirmed_map.get(t, {})}
     )
 
     children = [
@@ -551,12 +550,9 @@ def update_info_mode(sel_project, doc_store):
         html.H5("🧩 Kolom yang dipakai di Dataiku per table", className="mt-3"),
         dbc.Select(
             id="info-conn-filter",
-            options=[
-                {"label": "Default (DWH + EDM + BICC)", "value": "__default__"},
-                {"label": "Semua Connection (semua table, termasuk AMFS_dataset/MPI_DATAMART dll)", "value": "__all__"},
-            ]
+            options=[{"label": "Semua Connection", "value": "__all__"}]
             + [{"label": c, "value": c} for c in conn_opts],
-            value="__default__",
+            value="__all__",
             className="mb-2",
             style={"maxWidth": "420px"},
         ),
@@ -580,17 +576,13 @@ def update_info_table(sel_project, doc_store, conn_filter):
     dataset_meta = doc_store.get("dataset_meta", {})
     proj_df = df[df["Project"] == sel_project]
     tables_for_project = sorted(proj_df["Short Table"].dropna().unique())
-    all_tables_pool = sorted(set(tables_for_project) | set(table_confirmed_map))
+    raw_pool = sorted(set(tables_for_project) | set(table_confirmed_map))
+    all_tables_pool = _allowed_tables_pool(raw_pool, dataset_meta) if dataset_meta else list(table_confirmed_map)
 
-    if conn_filter == "__all__":
-        tables_to_show = all_tables_pool
-    elif conn_filter and conn_filter not in ("__default__", None):
-        # Connection spesifik dipilih - saring dari SEMUA table (termasuk
-        # EDM/dataset lain di luar Coretan project ini), bukan cuma yang
-        # di-track project ini.
+    if conn_filter and conn_filter != "__all__":
         tables_to_show = [t for t in all_tables_pool if _conn_of(t, dataset_meta) == conn_filter.upper()]
     else:
-        tables_to_show = _default_tables_pool(all_tables_pool, dataset_meta)
+        tables_to_show = all_tables_pool
 
     frames = []
     for t in tables_to_show:
