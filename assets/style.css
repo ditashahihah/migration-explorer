@@ -1,57 +1,149 @@
-/* Tambahan kecil di atas tema dbc.themes.DARKLY (Bootstrap) - tema utama
-   sudah dihandle Bootstrap, ini cuma buat bagian yang Bootstrap nggak
-   otomatis sentuh (dcc.Upload, dash_table, dcc.Dropdown multi-select). */
+/* Polish di atas tema dbc.themes.DARKLY (Bootstrap) - tema utama sudah
+   dihandle Bootstrap, ini nambahin: font, warna aksen, shadow/hover,
+   spacing, dan bagian yang Bootstrap nggak otomatis sentuh (dcc.Upload,
+   dash_table, dcc.Dropdown multi-select). */
 
-#info-upload {
-  background-color: #303030 !important;
-  color: #adb5bd !important;
-  border-color: #444 !important;
+:root {
+  --accent: #22d3ee;       /* cyan terang - aksen utama */
+  --accent-soft: #0e7490;
+  --bg-page: #14161a;
+  --bg-card: #1e2126;
+  --border: #2c3038;
 }
-#info-upload a { color: #375a7f !important; }
 
+body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif !important;
+  background-color: var(--bg-page) !important;
+}
+
+.container { max-width: 1200px; }
+
+h2, h3, h4, h5 { font-weight: 600 !important; letter-spacing: -0.01em; }
+h2 {
+  background: linear-gradient(90deg, var(--accent), #a78bfa);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+  display: inline-block;
+}
+
+hr { border-color: var(--border); opacity: 1; }
+
+/* Tombol mode & radio bergaya segmented-button (btn-group) */
+.btn-group .btn {
+  border-color: var(--border) !important;
+  color: #c9ced6 !important;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+.btn-group .btn:hover { border-color: var(--accent) !important; color: #fff !important; }
+.btn-check:checked + .btn,
+.btn-group .btn.active {
+  background-color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #0b1015 !important;
+  font-weight: 600;
+}
+
+/* Tombol biasa (Go Compare) */
+.btn-primary {
+  background-color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #0b1015 !important;
+  font-weight: 600 !important;
+  box-shadow: 0 2px 8px rgba(34, 211, 238, 0.25);
+}
+.btn-primary:hover { filter: brightness(1.1); }
+
+/* Card (dropdown container implicit, metric card, dll) */
+.card {
+  background-color: var(--bg-card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+
+/* Metric card - seragam, rapi, ada aksen kiri */
+.metric-card {
+  min-width: 175px;
+  text-align: center;
+  border-left: 4px solid var(--accent) !important;
+  transition: transform 0.15s ease;
+}
+.metric-card:hover { transform: translateY(-2px); }
+.metric-card .card-body { padding: 16px 20px; }
+.metric-card .text-muted { text-transform: uppercase; letter-spacing: 0.04em; font-size: 11.5px !important; }
+
+/* Select / Input native (dbc.Select, dbc.Input) */
+.form-select, .form-control {
+  background-color: var(--bg-card) !important;
+  border: 1px solid var(--border) !important;
+  color: #eee !important;
+  border-radius: 8px !important;
+}
+.form-select:focus, .form-control:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 0.2rem rgba(34, 211, 238, 0.2) !important;
+}
+
+/* Upload box */
+#info-upload {
+  background-color: var(--bg-card) !important;
+  color: #9aa1ab !important;
+  border: 2px dashed var(--border) !important;
+  border-radius: 10px !important;
+  transition: border-color 0.15s ease;
+}
+#info-upload:hover { border-color: var(--accent) !important; }
+#info-upload a { color: var(--accent) !important; font-weight: 600; }
+
+/* Dash DataTable */
 .dash-table-container .dash-spreadsheet-container,
 .dash-table-container .dash-spreadsheet-inner table {
-  background-color: #2a2a2a !important;
+  background-color: var(--bg-card) !important;
+  border-radius: 8px;
+  overflow: hidden;
 }
 .dash-table-container .dash-spreadsheet-inner th {
-  background-color: #1a1a1a !important;
+  background-color: #262a32 !important;
   color: #fff !important;
-  border-color: #444 !important;
+  border-color: var(--border) !important;
+  font-weight: 600 !important;
 }
 .dash-table-container .dash-spreadsheet-inner td {
-  background-color: #2a2a2a !important;
-  color: #eee !important;
-  border-color: #3a3a3a !important;
+  background-color: var(--bg-card) !important;
+  color: #e2e5e9 !important;
+  border-color: #262a32 !important;
+}
+.dash-table-container .dash-spreadsheet-inner tr:hover td {
+  background-color: #262a32 !important;
 }
 .dash-filter input {
-  background-color: #1a1a1a !important;
+  background-color: #14161a !important;
   color: #fff !important;
+  border-radius: 4px;
 }
-.dash-filter input::placeholder {
-  color: #ccc !important;
-  opacity: 1 !important;
-}
-/* badge tipe kolom ("Aa" / "#" / dst) di header filter row */
-.dash-filter--case {
-  color: #ccc !important;
-}
+.dash-filter input::placeholder { color: #ccc !important; opacity: 1 !important; }
+.dash-filter--case { color: #ccc !important; }
 
-/* Metric card (dipakai di metric_row()) - biar seragam & rapi */
-.metric-card {
-  min-width: 170px;
-  text-align: center;
-  border-left: 4px solid #375a7f !important;
-}
-.metric-card .card-body { padding: 14px 18px; }
+/* checkbox row_selectable */
+input[type="checkbox"] { accent-color: var(--accent); }
 
 /* dcc.Dropdown multi-select (Filter Domain di mode Kelengkapan Stage) */
 .Select-control, div[class*="-control"] {
-  background-color: #2a2a2a !important;
-  border-color: #444 !important;
+  background-color: var(--bg-card) !important;
+  border-color: var(--border) !important;
+  border-radius: 8px !important;
 }
 .Select-menu-outer, div[class*="-menu"] {
-  background-color: #2a2a2a !important;
+  background-color: var(--bg-card) !important;
 }
 div[class*="-singleValue"], div[class*="-placeholder"], .Select-value-label {
   color: #eee !important;
+}
+div[class*="-multiValue"] {
+  background-color: var(--accent-soft) !important;
+}
+div[class*="-multiValue"] > div {
+  color: #fff !important;
 }
