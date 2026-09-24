@@ -15,127 +15,37 @@ struktur data & kolomnya.
 
 import io
 import os
-import shutil
 
 import pandas as pd
-import requests
 import streamlit as st
 
 from dataiku_doc import build_project_column_report, parse_dataiku_doc
 from dataiku_json import parse_dataiku_json
 from stage_mapping import build_full_lineage_table
+from data_core import (
+    BACKUP_PATH,
+    DEFAULT_PATH,
+    DISPLAY_COLUMNS,
+    SHEET_NAME,
+    STATUS_COLORS,
+    build_table_confirmed_map,
+    build_table_union,
+    gsheet_enabled,
+    pipeline_stage_counts,
+)
+from data_core import load_data as _load_data_core
+from data_core import save_project_selection as _save_project_selection_core
 
-
-def get_secret(name: str, default=None):
-    """Baca secret dari st.secrets (Streamlit Cloud/lokal, .streamlit/secrets.toml)
-    kalau ada, fallback ke environment variable (Hugging Face Spaces & host lain
-    yang nyimpen secrets sebagai env var, bukan secrets.toml). Ini bikin app-nya
-    portable ke berbagai platform hosting tanpa ubah kode."""
-    try:
-        if name in st.secrets:
-            return st.secrets[name]
-    except Exception:
-        pass
-    # env var lookup: coba nama persis dulu, lalu versi UPPERCASE (konvensi
-    # umum di host lain kayak Hugging Face Spaces) - env var case-sensitive
-    # di Linux, beda dari Windows yang case-insensitive.
-    if name in os.environ:
-        return os.environ[name]
-    return os.environ.get(name.upper(), default)
-
-
-def has_secret(name: str) -> bool:
-    return get_secret(name) is not None
-
-
-# ---------------------------------------------------------------------
-# Konfigurasi & konstanta
-# ---------------------------------------------------------------------
-SHEET_NAME = "Coretan Checking Migration"
-DEFAULT_PATH = "Checking_Progress_Migration.xlsx"
-
-# Pemetaan nama kolom asli (di Excel) -> nama kolom yang dipakai di app ini.
-# Kalau nanti header di Excel berubah, cukup update dictionary ini.
-COLUMN_MAP = {
-    "Project": "Project",
-    "Data Source (Tables)": "Data Source",
-    "Phase 1": "Phase 1",
-    "Column DWH": "Column DWH",
-    "Source Table in DataLake": "Bronze Table",
-    "Status Column Source": "Status",
-    "Source Column In datalake": "Bronze Column",
-    "Stage to silver 2": "Stage to Silver",
-    "Table Silver Tier 1 In Datalake": "Silver1 Table",
-    "Column Silver Tier 1 In Datalake": "Silver1 Column",
-    "Table Silver Tier 2 in datalake": "Silver2 Table",
-    "Silver Column Datalake Tier 2": "Silver2 Column",
-    "Domain": "Domain",
-    "Kategori Project": "Kategori Project",
-    "Formula Hardcode": "Formula Hardcode",
-}
-
-# Urutan & kolom yang ditampilkan di tabel detail (biar konsisten DWH -> Bronze
-# -> Silver1 -> Silver2 dari kiri ke kanan).
-DISPLAY_COLUMNS = [
-    "Project",
-    "Short Table",
-    "Column DWH",
-    "Status",
-    "Bronze Table",
-    "Bronze Column",
-    "Silver1 Table",
-    "Silver1 Column",
-    "Silver2 Table",
-    "Silver2 Column",
-    "Domain",
-    "Kategori Project",
-    "Phase 1",
-    "Formula Hardcode",
-]
-
-STATUS_COLORS = {
-    "Gap": "background-color: #f8696b; color: white;",
-    "Hardcode": "background-color: #ffeb84;",
-    "Table": "background-color: #63be7b;",
-}
-
-# ---------------------------------------------------------------------
-# Seleksi Kolom: 2 backend penyimpanan.
-#
-# 1. Google Sheets lewat Google Apps Script Web App (kalau secrets
-#    `gsheet_webapp_url` + `gsheet_webapp_token` ada) — dipakai kalau app
-#    di-deploy ke hosting gratis (storage-nya sementara, jadi hasil seleksi
-#    PIC harus disimpan di luar container biar tidak hilang tiap restart).
-#    Dipilih lewat Apps Script (bukan service account Google Cloud) karena
-#    Apps Script cuma butuh akun Google biasa — tidak perlu bikin project
-#    Google Cloud / kartu kredit sama sekali. Lihat README bagian 7.
-# 2. File lokal `Checking_Progress_Migration.xlsx` (fallback kalau secrets
-#    di atas tidak ada) — dipakai waktu jalan lokal di laptop. Ditulis balik
-#    sebagai 3 sheet tambahan (sheet Coretan & sheet lain tidak disentuh),
-#    dengan backup 1-langkah-mundur tiap sebelum nulis.
-# ---------------------------------------------------------------------
-SHEET_SELECTED = "Selected Columns"
-SHEET_UNIQUE = "Unique Columns per Table"
-SHEET_COMPILE = "Compile per Table"
-BACKUP_PATH = DEFAULT_PATH + ".bak"
-
-# kolom yang disimpan di sheet "Selected Columns" (sama seperti DISPLAY_COLUMNS
-# + recipe Dataiku mana aja yang confirmed makai kolom ini + jejak waktu submit)
-SELECTED_SHEET_COLUMNS = DISPLAY_COLUMNS + ["Dipakai di Recipe", "Selected At"]
-
-
-# ---------------------------------------------------------------------
-# Helper: ekstrak nama table pendek dari "Data Source (Tables)"
-# Contoh: "[DB_ANALYTICS].[AMFS_DWH].[dbo].[IB_BRANCH]" -> "IB_BRANCH"
-# Ini rule yang sama persis dipakai waktu regenerasi sheet
-# "List Table Compile - DWH", supaya hasilnya konsisten.
-# ---------------------------------------------------------------------
-def extract_short_table(value):
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return None
-    s = str(value).strip()
-    last = s.split(".")[-1].strip().strip("[]").strip()
-    return last.upper() if last else None
+# Jembatan ke st.secrets (Streamlit Cloud/lokal, .streamlit/secrets.toml) -
+# data_core.get_secret cuma baca env var (portable ke semua host), jadi di
+# sini secrets.toml (kalau ada) disalin ke os.environ SEKALI di awal supaya
+# tetap kepakai tanpa data_core perlu tahu soal Streamlit sama sekali.
+try:
+    for _key in ("gsheet_webapp_url", "gsheet_webapp_token"):
+        if _key not in os.environ and _key in st.secrets:
+            os.environ[_key] = st.secrets[_key]
+except Exception:
+    pass
 
 
 @st.cache_data(show_spinner="Membaca dokumen Dataiku Flow (dokumen besar bisa makan waktu ~10-20 detik)...")
@@ -163,22 +73,16 @@ def load_full_lineage_table() -> pd.DataFrame:
 
 @st.cache_data(show_spinner="Memuat data dari Excel...")
 def load_data(file_source) -> pd.DataFrame:
-    """Baca sheet 'Coretan Checking Migration' dan siapkan kolom turunan."""
-    df = pd.read_excel(file_source, sheet_name=SHEET_NAME, engine="openpyxl")
-    df = df.rename(columns=COLUMN_MAP)
-
-    keep_cols = [c for c in COLUMN_MAP.values() if c in df.columns]
-    df = df[keep_cols].copy()
-
-    df["Short Table"] = df["Data Source"].apply(extract_short_table)
-
-    # buang baris yang benar-benar kosong (tidak ada project & table sama sekali)
-    df = df.dropna(subset=["Project", "Short Table"], how="all").reset_index(drop=True)
-    return df
+    """Wrapper cached di atas data_core.load_data()."""
+    return _load_data_core(file_source)
 
 
 def style_status(val):
-    return STATUS_COLORS.get(val, "")
+    color = STATUS_COLORS.get(val)
+    if not color:
+        return ""
+    text_color = "white" if val == "Gap" else "black"
+    return f"background-color: {color}; color: {text_color};"
 
 
 def render_detail_table(df_subset: pd.DataFrame):
@@ -252,200 +156,7 @@ def render_dataset_table(datasets: dict, names: list, key_prefix: str):
             st.write(", ".join(datasets[detail_pick].columns) or "-")
 
 
-def pipeline_stage_counts(df_subset: pd.DataFrame) -> dict:
-    """Hitung berapa kolom DWH unik di df_subset yang sampai ke tiap stage
-    pipeline (Bronze/Silver) dan Hardcode/Gap. Di-dedup dulu by (Short Table,
-    Column DWH) supaya kolom yang dipakai banyak project tidak dobel-hitung,
-    dan kolom senama di table berbeda tetap dihitung terpisah. "Silver"
-    dihitung dari Silver Tier 2 saja (stage akhir)."""
-    unique = df_subset.dropna(subset=["Column DWH"]).drop_duplicates(subset=["Short Table", "Column DWH"])
-    return {
-        "unik": len(unique),
-        "bronze": int((unique["Status"] == "Table").sum()) if "Status" in unique else 0,
-        "silver": int(unique["Silver2 Table"].notna().sum()) if "Silver2 Table" in unique else 0,
-        "hardcode": int((unique["Status"] == "Hardcode").sum()) if "Status" in unique else 0,
-        "gap": int((unique["Status"] == "Gap").sum()) if "Status" in unique else 0,
-    }
-
-
-# ---------------------------------------------------------------------
-# Seleksi Kolom: backend Google Sheets lewat Apps Script Web App
-# ---------------------------------------------------------------------
-def gsheet_enabled() -> bool:
-    """False kalau secret gsheet_webapp_url/gsheet_webapp_token belum diisi,
-    baik lewat secrets.toml (Streamlit Cloud/lokal) maupun environment
-    variable (host lain kayak Hugging Face Spaces)."""
-    return has_secret("gsheet_webapp_url") and has_secret("gsheet_webapp_token")
-
-
-def _appscript_call(action: str, **payload) -> dict:
-    """POST ke Apps Script Web App. Apps Script selalu balas HTTP 200 (tidak
-    bisa set status code custom), jadi sukses/gagal dicek dari field `ok`
-    di body JSON-nya, bukan dari status code."""
-    url = get_secret("gsheet_webapp_url")
-    token = get_secret("gsheet_webapp_token")
-    resp = requests.post(url, json={"token": token, "action": action, **payload}, timeout=20)
-    resp.raise_for_status()
-    data = resp.json()
-    if not data.get("ok"):
-        raise RuntimeError(data.get("error", "Apps Script mengembalikan error tanpa detail"))
-    return data
-
-
-def _df_to_appscript_payload(df: pd.DataFrame) -> dict:
-    header = list(df.columns)
-    body = df.astype(object).where(pd.notna(df), "").values.tolist() if not df.empty else []
-    return {"headers": header, "rows": body}
-
-
-def load_selected_sheet_gsheet() -> pd.DataFrame:
-    data = _appscript_call("read", sheet=SHEET_SELECTED)
-    rows = data.get("rows", [])
-    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=SELECTED_SHEET_COLUMNS)
-
-
-def save_project_selection_gsheet(project: str, new_rows: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Sama seperti save_project_selection_local, tapi 3 sheet-nya ditulis ke
-    tab Google Sheets lewat Apps Script Web App, bukan ke file Excel lokal —
-    supaya persisten di hosting gratis yang storage lokalnya sementara."""
-    existing = load_selected_sheet_gsheet()
-    existing = existing[existing["Project"] != project] if not existing.empty else existing
-
-    new_rows = new_rows.copy()
-    new_rows["Selected At"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
-    new_rows = new_rows[[c for c in SELECTED_SHEET_COLUMNS if c in new_rows.columns]]
-
-    combined = pd.concat([existing, new_rows], ignore_index=True)
-    unique_df = build_unique_sheet(combined)
-    compile_df = build_compile_sheet(unique_df)
-
-    _appscript_call("write", sheet=SHEET_SELECTED, **_df_to_appscript_payload(combined))
-    _appscript_call("write", sheet=SHEET_UNIQUE, **_df_to_appscript_payload(unique_df))
-    _appscript_call("write", sheet=SHEET_COMPILE, **_df_to_appscript_payload(compile_df))
-
-    return combined, unique_df, compile_df
-
-
-# ---------------------------------------------------------------------
-# Seleksi Kolom: backend file Excel lokal (fallback waktu tidak ada
-# kredensial Google Sheets, misal jalan lokal di laptop)
-# ---------------------------------------------------------------------
-def load_selected_sheet_local(path: str) -> pd.DataFrame:
-    """Baca sheet 'Selected Columns' dari file output kalau sudah ada."""
-    try:
-        return pd.read_excel(path, sheet_name=SHEET_SELECTED, engine="openpyxl")
-    except (FileNotFoundError, ValueError):
-        return pd.DataFrame(columns=SELECTED_SHEET_COLUMNS)
-
-
-def build_unique_sheet(selected_df: pd.DataFrame) -> pd.DataFrame:
-    """Union unik (Short Table, Column DWH) dari seluruh project yang pernah diseleksi."""
-    key_cols = ["Short Table", "Column DWH"]
-    detail_cols = [
-        c
-        for c in [
-            "Status",
-            "Bronze Table",
-            "Bronze Column",
-            "Silver1 Table",
-            "Silver1 Column",
-            "Silver2 Table",
-            "Silver2 Column",
-            "Domain",
-        ]
-        if c in selected_df.columns
-    ]
-    unique_df = selected_df.drop_duplicates(subset=key_cols)[key_cols + detail_cols].copy()
-
-    projects_by_key = (
-        selected_df.groupby(key_cols)["Project"]
-        .apply(lambda s: ", ".join(sorted(set(s.dropna()))))
-        .reset_index()
-        .rename(columns={"Project": "Projects"})
-    )
-    unique_df = unique_df.merge(projects_by_key, on=key_cols, how="left")
-    return unique_df.sort_values(key_cols).reset_index(drop=True)
-
-
-def build_compile_sheet(unique_df: pd.DataFrame) -> pd.DataFrame:
-    """Compile hitungan per table: dari DWH berapa yang sampai Bronze/Silver/Hardcode/Gap."""
-    if unique_df.empty:
-        return pd.DataFrame(
-            columns=[
-                "Short Table",
-                "Jumlah Kolom DWH",
-                "Jumlah ke Bronze",
-                "Jumlah ke Silver 1",
-                "Jumlah ke Silver 2",
-                "Jumlah Hardcode",
-                "Jumlah Gap",
-            ]
-        )
-
-    grouped = unique_df.groupby("Short Table").agg(
-        **{
-            "Jumlah Kolom DWH": ("Column DWH", "count"),
-            "Jumlah ke Bronze": ("Status", lambda s: (s == "Table").sum()),
-            "Jumlah Hardcode": ("Status", lambda s: (s == "Hardcode").sum()),
-            "Jumlah Gap": ("Status", lambda s: (s == "Gap").sum()),
-        }
-    )
-    if "Silver1 Table" in unique_df.columns:
-        grouped["Jumlah ke Silver 1"] = unique_df.groupby("Short Table")["Silver1 Table"].apply(
-            lambda s: s.notna().sum()
-        )
-    if "Silver2 Table" in unique_df.columns:
-        grouped["Jumlah ke Silver 2"] = unique_df.groupby("Short Table")["Silver2 Table"].apply(
-            lambda s: s.notna().sum()
-        )
-
-    grouped = grouped.reset_index()
-    col_order = [
-        "Short Table",
-        "Jumlah Kolom DWH",
-        "Jumlah ke Bronze",
-        "Jumlah ke Silver 1",
-        "Jumlah ke Silver 2",
-        "Jumlah Hardcode",
-        "Jumlah Gap",
-    ]
-    return grouped[[c for c in col_order if c in grouped.columns]]
-
-
-def save_project_selection_local(path: str, project: str, new_rows: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Ganti seleksi lama project ini dengan yang baru, lalu tulis ulang 3 sheet
-    seleksi ke dalam `path` (file master) tanpa mengubah sheet-sheet lain."""
-    existing = load_selected_sheet_local(path)
-    existing = existing[existing["Project"] != project] if not existing.empty else existing
-
-    new_rows = new_rows.copy()
-    new_rows["Selected At"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
-    new_rows = new_rows[[c for c in SELECTED_SHEET_COLUMNS if c in new_rows.columns]]
-
-    combined = pd.concat([existing, new_rows], ignore_index=True)
-    unique_df = build_unique_sheet(combined)
-    compile_df = build_compile_sheet(unique_df)
-
-    # backup 1-langkah-mundur sebelum nulis, jaga-jaga kalau proses tulis gagal
-    shutil.copy2(path, path + ".bak")
-
-    with pd.ExcelWriter(path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-        combined.to_excel(writer, sheet_name=SHEET_SELECTED, index=False)
-        unique_df.to_excel(writer, sheet_name=SHEET_UNIQUE, index=False)
-        compile_df.to_excel(writer, sheet_name=SHEET_COMPILE, index=False)
-
-    return combined, unique_df, compile_df
-
-
-# ---------------------------------------------------------------------
-# Seleksi Kolom: dispatcher — pilih backend Google Sheets kalau ada
-# kredensialnya (deploy di hosting gratis), fallback ke file Excel lokal
-# kalau tidak (jalan lokal di laptop).
-# ---------------------------------------------------------------------
-def save_project_selection(project: str, new_rows: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    if gsheet_enabled():
-        return save_project_selection_gsheet(project, new_rows)
-    return save_project_selection_local(DEFAULT_PATH, project, new_rows)
+save_project_selection = _save_project_selection_core
 
 
 # ---------------------------------------------------------------------
@@ -755,73 +466,16 @@ elif mode == "🧩 Info Table by Project":
         key=f"selkol_tables_{sel_project}_{conn_key_part}",
     )
     sel_tables = sel_tables_input if sel_tables_input else candidate_tables
-
-    def _norm_col(s) -> str:
-        """Normalisasi nama kolom buat dibandingkan - Coretan sering nyimpen
-        Column DWH dengan bracket SQL Server (mis. '[OWN_MOBILE_PH]'), sedangkan
-        schema di dokumen Dataiku polos tanpa bracket. Tanpa normalisasi ini,
-        kolom yang sebenarnya sama bakal keliatan cuma-di-DWH DAN cuma-di-
-        Dokumen secara terpisah."""
-        return str(s).strip().strip("[]").strip().upper()
-
-    def _keterangan(in_dwh: bool, in_used: bool) -> str:
-        if in_dwh and in_used:
-            return "✅ Ada di DWH & dipakai di Dataiku"
-        if in_dwh:
-            return "📗 Ada di DWH, TIDAK dipakai di Dataiku"
-        return "📄 Dipakai di Dataiku, TIDAK ada di DWH"
+    table_confirmed_map = build_table_confirmed_map(doc_recipes)
 
     picked_frames = []
     for t in sel_tables:
         st.markdown(f"**📄 {t}**")
-        dwh_rows = (
-            proj_df[proj_df["Short Table"] == t][["Column DWH", "Status"]]
-            .dropna(subset=["Column DWH"])
-            .drop_duplicates()
+        cols_for_table = build_table_union(proj_df, table_confirmed_map, t)
+
+        used_only_count = int(
+            (cols_for_table["Keterangan"] == "📄 Dipakai di Dataiku, TIDAK ada di DWH").sum()
         )
-        dwh_status = dict(zip(dwh_rows["Column DWH"], dwh_rows["Status"]))
-        dwh_norm = {_norm_col(c): c for c in dwh_status}
-
-        # Union kolom yang CONFIRMED dipakai table ini di seluruh recipe
-        # (dari dokumen/dump) - bukan cuma schema dataset-nya doang, tapi
-        # kolom yang beneran ke-reference (join key/selected/group key/dst).
-        # Sekalian catat recipe mana aja yang makainya (bisa lebih dari 1).
-        used_norm: dict[str, str] = {}
-        used_recipes: dict[str, list] = {}
-        for r in doc_recipes:
-            cols = r.confirmed_columns.get(t)
-            if not cols:
-                continue
-            for c in cols:
-                n = _norm_col(c)
-                used_norm.setdefault(n, c)
-                used_recipes.setdefault(n, []).append(r.name)
-
-        # Cuma tampilin kolom yang confirmed dipakai di Dataiku (baik ada di
-        # DWH maupun nggak) - kolom yang ADA di DWH tapi nggak kepakai di
-        # recipe manapun nggak usah muncul di sini sama sekali.
-        all_norm = sorted(set(used_norm))
-        rows = []
-        for n in all_norm:
-            in_dwh, in_used = n in dwh_norm, n in used_norm
-            label = dwh_norm[n] if in_dwh else used_norm[n]
-            rows.append(
-                {
-                    "Column DWH": label,
-                    "Status": dwh_status.get(label, "-") if in_dwh else "-",
-                    "Keterangan": _keterangan(in_dwh, in_used),
-                    "Dipakai di Recipe": ", ".join(sorted(set(used_recipes.get(n, [])))) or "-",
-                }
-            )
-        cols_for_table = pd.DataFrame(rows, columns=["Column DWH", "Status", "Keterangan", "Dipakai di Recipe"])
-        # Default kecentang HANYA kalau kolomnya kedua-duanya: ada di DWH DAN
-        # confirmed dipakai di Dataiku - "ada di DWH doang" atau "dipakai di
-        # Dataiku doang" tetap perlu direview manual dulu.
-        both_norm = set(dwh_norm) & set(used_norm)
-        default_pilih = cols_for_table["Column DWH"].apply(lambda c: _norm_col(c) in both_norm)
-        cols_for_table.insert(0, "Pilih", default_pilih)
-
-        used_only_count = len(set(used_norm) - set(dwh_norm))
         if used_only_count:
             st.caption(
                 f"📄 {used_only_count} kolom dipakai di Dataiku tapi belum tercatat "
