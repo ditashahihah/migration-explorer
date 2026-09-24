@@ -1,3 +1,13 @@
+---
+title: Migration Progress Explorer
+emoji: 🔍
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 8501
+pinned: false
+---
+
 # Migration Progress Explorer
 
 Streamlit app kecil untuk menelusuri progress migrasi data AXA Mandiri

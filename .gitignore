@@ -11,3 +11,7 @@ __pycache__/
 # Dokumen Dataiku Flow Documentation lokal buat testing - tidak dipakai app
 # (upload manual tiap sesi), dan isinya dokumentasi flow asli, jangan ke git.
 *.docx
+
+# Dump JSON hasil export_code.txt/dump_flow_via_notebook.py - isinya definisi
+# recipe/dataset project Dataiku asli, sama kayak .docx di atas jangan ke git.
+export_ecm.json

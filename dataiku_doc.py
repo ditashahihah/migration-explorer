@@ -22,9 +22,20 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-import docx
-from docx.table import Table
-from docx.text.paragraph import Paragraph
+try:
+    import docx
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+except ImportError:
+    # python-docx tidak tersedia di semua tempat hosting (mis. Streamlit in
+    # Snowflake warehouse runtime, yang dibatasi cuma paket Anaconda channel).
+    # Jangan crash cuma gara-gara modul ini di-import - Dataset/Recipe dan
+    # build_project_column_report() tetap kepake dari sumber lain (JSON, lihat
+    # dataiku_json.py). parse_dataiku_doc() sendiri baru raise error yang jelas
+    # kalau BENERAN dipanggil tanpa python-docx.
+    docx = None
+    Table = None
+    Paragraph = None
 
 
 @dataclass
@@ -150,6 +161,11 @@ def parse_dataiku_doc(file_or_path) -> tuple[dict, list]:
       datasets: dict nama_dataset -> Dataset
       recipes: list[Recipe]
     """
+    if docx is None:
+        raise ImportError(
+            "python-docx tidak tersedia di environment ini - upload dump JSON "
+            "(dari dump_flow_via_notebook.py) sebagai gantinya."
+        )
     document = docx.Document(file_or_path)
     items = list(_iter_block_items(document))
     n = len(items)
@@ -269,7 +285,7 @@ def build_project_column_report(datasets: dict, recipes: list, coretan_short_tab
             if name in r.inputs or name in r.outputs:
                 if name in r.confirmed_columns:
                     confirmed.update(r.confirmed_columns[name])
-                if r.type == "Prepare":
+                if r.type.lower() in ("prepare", "shaker"):
                     uncertain = True
         report[name] = {
             "dataiku_name": name,
