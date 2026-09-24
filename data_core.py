@@ -1,10 +1,10 @@
 """
 Logika data murni (framework-agnostic) buat Migration Progress Explorer -
-dipakai bareng oleh app.py (Streamlit) dan dash_app.py (Dash), supaya kedua
-UI itu selalu konsisten hasilnya (satu sumber kebenaran buat aturan bisnis).
+dipakai oleh dash_app.py, dipisah dari layer UI supaya jadi satu sumber
+kebenaran buat aturan bisnis (dan gampang dites tanpa perlu jalanin app).
 
-Modul ini SENGAJA tidak import streamlit atau dash - cuma pandas/requests/
-stdlib, jadi aman dipakai dari environment manapun.
+Modul ini SENGAJA tidak import dash - cuma pandas/requests/stdlib, jadi
+aman dipakai dari environment manapun.
 """
 
 from __future__ import annotations

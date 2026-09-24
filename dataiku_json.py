@@ -8,9 +8,9 @@ Snowflake, upload .docx nggak bisa dipakai. Dump JSON ini cuma butuh
 `dataiku` API standar buat di-generate (lihat dump_flow_via_notebook.py),
 dan file JSON-nya sendiri nggak butuh library eksternal buat di-parse.
 
-Output-nya SENGAJA dibikin sama persis strukturnya (dataclass Dataset/Recipe)
-kayak dataiku_doc.py, supaya app.py & build_project_column_report() bisa
-dipakai apa adanya buat 2 sumber (docx atau json) tanpa perlu tahu bedanya.
+Reuse dataclass Dataset/Recipe dari dataiku_doc.py (parser .docx lama, sudah
+tidak dipakai buat parsing lagi - dukungan .docx sudah dihapus dari app,
+JSON-only sekarang) supaya struktur datanya tetap konsisten.
 
 BONUS dibanding docx: raw JSON recipe (payload) Dataiku ternyata nyimpen
 kolom SPESIFIK yang dipakai tiap recipe per tipe (bukan cuma "kena Prepare,

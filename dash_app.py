@@ -1,17 +1,16 @@
 """
 Migration Progress Explorer - versi Dash.
 
-Alternatif dari app.py (Streamlit) buat kondisi jaringan/device yang blokir
+Dipilih Dash (bukan Streamlit) karena kondisi jaringan/device yang blokir
 protokol WebSocket (Streamlit WAJIB pakai WebSocket buat reaktivitasnya,
 Dash defaultnya pakai HTTP request/AJAX biasa buat callback-nya, jadi lebih
 tahan terhadap proxy/firewall korporat yang ketat).
 
-Logika data (load_data, union DWH+recipe, simpan seleksi, dst) 100% reuse
-dari data_core.py - SAMA PERSIS dengan yang dipakai app.py, jadi hasil dari
-kedua UI ini selalu konsisten.
+Logika data (load_data, union DWH+recipe, simpan seleksi, dst) ada di
+data_core.py, dipisah dari layer UI ini.
 
 Run lokal:  python dash_app.py
-Run Docker: lihat Dockerfile.dash
+Run Docker: lihat Dockerfile (root) - CMD-nya gunicorn dash_app:server
 """
 
 from __future__ import annotations
