@@ -14,4 +14,4 @@ __pycache__/
 
 # Dump JSON hasil export_code.txt/dump_flow_via_notebook.py - isinya definisi
 # recipe/dataset project Dataiku asli, sama kayak .docx di atas jangan ke git.
-export_ecm.json
+export_ecm*.json

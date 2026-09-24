@@ -1,0 +1,57 @@
+/* Tambahan kecil di atas tema dbc.themes.DARKLY (Bootstrap) - tema utama
+   sudah dihandle Bootstrap, ini cuma buat bagian yang Bootstrap nggak
+   otomatis sentuh (dcc.Upload, dash_table, dcc.Dropdown multi-select). */
+
+#info-upload {
+  background-color: #303030 !important;
+  color: #adb5bd !important;
+  border-color: #444 !important;
+}
+#info-upload a { color: #375a7f !important; }
+
+.dash-table-container .dash-spreadsheet-container,
+.dash-table-container .dash-spreadsheet-inner table {
+  background-color: #2a2a2a !important;
+}
+.dash-table-container .dash-spreadsheet-inner th {
+  background-color: #1a1a1a !important;
+  color: #fff !important;
+  border-color: #444 !important;
+}
+.dash-table-container .dash-spreadsheet-inner td {
+  background-color: #2a2a2a !important;
+  color: #eee !important;
+  border-color: #3a3a3a !important;
+}
+.dash-filter input {
+  background-color: #1a1a1a !important;
+  color: #fff !important;
+}
+.dash-filter input::placeholder {
+  color: #ccc !important;
+  opacity: 1 !important;
+}
+/* badge tipe kolom ("Aa" / "#" / dst) di header filter row */
+.dash-filter--case {
+  color: #ccc !important;
+}
+
+/* Metric card (dipakai di metric_row()) - biar seragam & rapi */
+.metric-card {
+  min-width: 170px;
+  text-align: center;
+  border-left: 4px solid #375a7f !important;
+}
+.metric-card .card-body { padding: 14px 18px; }
+
+/* dcc.Dropdown multi-select (Filter Domain di mode Kelengkapan Stage) */
+.Select-control, div[class*="-control"] {
+  background-color: #2a2a2a !important;
+  border-color: #444 !important;
+}
+.Select-menu-outer, div[class*="-menu"] {
+  background-color: #2a2a2a !important;
+}
+div[class*="-singleValue"], div[class*="-placeholder"], .Select-value-label {
+  color: #eee !important;
+}

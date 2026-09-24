@@ -268,11 +268,19 @@ def parse_dataiku_json(file_or_path) -> tuple[dict, list]:
 
     recipes: list[Recipe] = []
     for name, entry in (raw.get("recipes") or {}).items():
+        inputs, outputs = entry.get("inputs"), entry.get("outputs")
+        if not inputs and not outputs and entry.get("definition"):
+            # dump-nya belum nge-flatten inputs/outputs sendiri (masih nested
+            # di definition.inputs/outputs.<role>.items[].ref) - flatten di
+            # sini biar tetap kepakai tanpa perlu generate ulang dump-nya.
+            definition = entry["definition"]
+            inputs = _flatten_refs(definition.get("inputs"))
+            outputs = _flatten_refs(definition.get("outputs"))
         recipe = Recipe(
             name=name,
             type=entry.get("type", ""),
-            inputs=list(entry.get("inputs") or []),
-            outputs=list(entry.get("outputs") or []),
+            inputs=list(inputs or []),
+            outputs=list(outputs or []),
         )
         rtype = (recipe.type or "").lower()
         payload = entry.get("payload")

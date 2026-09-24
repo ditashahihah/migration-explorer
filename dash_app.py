@@ -20,6 +20,7 @@ import base64
 import io
 
 import dash
+import dash_bootstrap_components as dbc
 import pandas as pd
 from dash import Input, Output, State, callback_context, dash_table, dcc, html
 from dash.exceptions import PreventUpdate
@@ -63,7 +64,12 @@ MODE_OPTIONS = [
     {"label": "📈 Kelengkapan Stage", "value": "stage"},
 ]
 
-app = dash.Dash(__name__, suppress_callback_exceptions=True, title="Migration Progress Explorer")
+app = dash.Dash(
+    __name__,
+    external_stylesheets=[dbc.themes.DARKLY],
+    suppress_callback_exceptions=True,
+    title="Migration Progress Explorer",
+)
 server = app.server  # dipakai gunicorn/Docker
 
 
@@ -78,16 +84,24 @@ def status_style_conditional(status_col: str = "Status") -> list:
     ]
 
 
-def metric_row(items: list[tuple[str, object]]) -> html.Div:
-    return html.Div(
+def metric_row(items: list[tuple[str, object]]) -> dbc.Row:
+    return dbc.Row(
         [
-            html.Div(
-                [html.Div(label, className="metric-label"), html.Div(str(value), className="metric-value")],
-                className="metric-box",
+            dbc.Col(
+                dbc.Card(
+                    dbc.CardBody(
+                        [
+                            html.Div(label, className="text-muted", style={"fontSize": "12.5px"}),
+                            html.Div(str(value), style={"fontSize": "26px", "fontWeight": 600}),
+                        ]
+                    ),
+                    className="metric-card mb-3",
+                ),
+                width="auto",
             )
             for label, value in items
         ],
-        className="metric-row",
+        className="g-3 mb-2",
     )
 
 
@@ -109,19 +123,23 @@ def data_table(df_in: pd.DataFrame, id_: str, **kwargs) -> dash_table.DataTable:
 # ---------------------------------------------------------------------
 # Layout
 # ---------------------------------------------------------------------
-app.layout = html.Div(
+app.layout = dbc.Container(
     [
-        html.H2("🔍 Migration Progress Explorer"),
+        html.H2("🔍 Migration Progress Explorer", className="mt-3"),
         html.P(
             "Sumber data: sheet 'Coretan Checking Migration' di Checking_Progress_Migration.xlsx "
             "— DWH → Bronze → Silver Tier 1 → Silver Tier 2",
-            style={"color": "#666"},
+            className="text-muted",
         ),
-        dcc.RadioItems(
+        dbc.RadioItems(
             id="mode",
             options=MODE_OPTIONS,
             value="table",
-            labelStyle={"display": "inline-block", "marginRight": "20px"},
+            inline=True,
+            className="btn-group flex-wrap mb-2",
+            inputClassName="btn-check",
+            labelClassName="btn btn-outline-primary",
+            labelCheckedClassName="active",
         ),
         html.Hr(),
         html.Div(id="mode-content"),
@@ -131,7 +149,8 @@ app.layout = html.Div(
         # dari build_table_confirmed_map() yang sudah plain dict).
         dcc.Store(id="info-doc-store"),
     ],
-    style={"maxWidth": "1200px", "margin": "0 auto", "padding": "20px", "fontFamily": "sans-serif"},
+    fluid=False,
+    className="pb-5",
 )
 
 
@@ -154,10 +173,12 @@ def render_table_mode():
     tables = sorted(t for t in df["Short Table"].dropna().unique())
     return html.Div(
         [
-            dcc.Dropdown(
+            dbc.Select(
                 id="table-dropdown",
                 options=[{"label": t, "value": t} for t in tables],
                 placeholder="Pilih table...",
+                className="mb-3",
+                style={"maxWidth": "400px"},
             ),
             html.Div(id="table-mode-body"),
         ]
@@ -167,7 +188,7 @@ def render_table_mode():
 @app.callback(Output("table-mode-body", "children"), Input("table-dropdown", "value"))
 def update_table_mode(selected_table):
     if not selected_table:
-        return html.P("Pilih table dulu.", style={"color": "#888"})
+        return html.P("Pilih table dulu.", className="text-muted")
 
     subset = df[df["Short Table"] == selected_table]
     projects_using = sorted(subset["Project"].dropna().unique())
@@ -209,10 +230,12 @@ def render_project_mode():
     projects = sorted(p for p in df["Project"].dropna().unique())
     return html.Div(
         [
-            dcc.Dropdown(
+            dbc.Select(
                 id="project-dropdown",
                 options=[{"label": p, "value": p} for p in projects],
                 placeholder="Pilih project...",
+                className="mb-3",
+                style={"maxWidth": "400px"},
             ),
             html.Div(id="project-mode-body"),
         ]
@@ -222,7 +245,7 @@ def render_project_mode():
 @app.callback(Output("project-mode-body", "children"), Input("project-dropdown", "value"))
 def update_project_mode(selected_project):
     if not selected_project:
-        return html.P("Pilih project dulu.", style={"color": "#888"})
+        return html.P("Pilih project dulu.", className="text-muted")
 
     subset = df[df["Project"] == selected_project]
     tables_used = sorted(subset["Short Table"].dropna().unique())
@@ -268,26 +291,31 @@ def render_stage_mode():
                 "Cross-check independen kelengkapan pipeline DWH → Bronze → Silver Tier 1 → "
                 "Silver Tier 2 — dihitung ulang dari 3 file mapping teknis terpisah, BUKAN dari "
                 "kolom Bronze/Silver yang sudah tercatat di Coretan.",
-                style={"color": "#666"},
+                className="text-muted",
             ),
-            dcc.RadioItems(
+            dbc.RadioItems(
                 id="stage-pick",
                 options=[{"label": k, "value": k} for k in STAGE_COL_MAP],
                 value="DWH",
-                labelStyle={"display": "inline-block", "marginRight": "15px"},
+                inline=True,
+                className="btn-group mb-2",
+                inputClassName="btn-check",
+                labelClassName="btn btn-outline-secondary",
+                labelCheckedClassName="active",
             ),
-            html.Div(
+            dbc.Row(
                 [
-                    dcc.Input(id="stage-table-kw", placeholder="Nama table...", style={"marginRight": "10px"}),
-                    dcc.Input(id="stage-col-kw", placeholder="Nama kolom (opsional)..."),
+                    dbc.Col(dbc.Input(id="stage-table-kw", placeholder="Nama table..."), width="auto"),
+                    dbc.Col(dbc.Input(id="stage-col-kw", placeholder="Nama kolom (opsional)..."), width="auto"),
                 ],
-                style={"marginTop": "10px", "marginBottom": "10px"},
+                className="g-2 mb-2 mt-1",
             ),
             dcc.Dropdown(
                 id="stage-domain",
                 options=[{"label": d, "value": d} for d in domain_opts],
                 multi=True,
                 placeholder="Filter Domain (kosongkan buat semua)...",
+                className="mb-3",
             ),
             html.Div(id="stage-mode-body"),
         ]
@@ -338,19 +366,24 @@ def render_info_mode():
                 "Pilih project → upload dokumen/dump Dataiku Flow (opsional) → pilih table → "
                 "centang kolom yang mau dibawa. Hasilnya disimpan ke "
                 + ("Google Sheets" if gsheet_enabled() else f"`{DEFAULT_PATH}`") + ".",
-                style={"color": "#666"},
+                className="text-muted",
             ),
-            dcc.Dropdown(
+            dbc.Select(
                 id="info-project-dropdown",
                 options=[{"label": p, "value": p} for p in projects],
                 placeholder="Pilih project...",
+                className="mb-2",
+                style={"maxWidth": "400px"},
             ),
-            dcc.RadioItems(
+            dbc.RadioItems(
                 id="info-doc-format",
                 options=[{"label": "JSON", "value": "json"}, {"label": "DOCX", "value": "docx"}],
                 value="json",
-                labelStyle={"display": "inline-block", "marginRight": "15px"},
-                style={"marginTop": "10px"},
+                inline=True,
+                className="btn-group mb-2",
+                inputClassName="btn-check",
+                labelClassName="btn btn-outline-secondary btn-sm",
+                labelCheckedClassName="active",
             ),
             dcc.Upload(
                 id="info-upload",
@@ -360,7 +393,7 @@ def render_info_mode():
                     "borderStyle": "dashed", "borderRadius": "5px", "textAlign": "center", "marginTop": "5px",
                 },
             ),
-            html.Div(id="info-upload-status"),
+            html.Div(id="info-upload-status", className="mt-2"),
             html.Div(id="info-mode-body"),
         ]
     )
@@ -420,21 +453,17 @@ def parse_uploaded(contents, filename):
 )
 def update_info_mode(sel_project, doc_store):
     if not sel_project:
-        return html.P("Pilih project dulu.", style={"color": "#888"})
+        return html.P("Pilih project dulu.", className="text-muted")
 
     proj_df = df[df["Project"] == sel_project]
     tables_for_project = sorted(proj_df["Short Table"].dropna().unique())
     table_confirmed_map = (doc_store or {}).get("table_confirmed_map", {})
 
     if not table_confirmed_map:
-        return html.Div(
-            [
-                html.P(
-                    "Belum ada dokumen/dump di-upload (atau belum ada recipe yang confirmed "
-                    "makai table project ini) — upload dulu buat lihat kolom yang dipakai di Dataiku.",
-                    style={"color": "#888"},
-                ),
-            ]
+        return html.P(
+            "Belum ada dokumen/dump di-upload (atau belum ada recipe yang confirmed "
+            "makai table project ini) — upload dulu buat lihat kolom yang dipakai di Dataiku.",
+            className="text-muted",
         )
 
     frames = []
@@ -448,16 +477,23 @@ def update_info_mode(sel_project, doc_store):
     if not frames:
         return html.P(
             "Nggak ada kolom project ini yang confirmed dipakai di dokumen/dump yang di-upload.",
-            style={"color": "#888"},
+            className="text-muted",
         )
 
     combined = pd.concat(frames, ignore_index=True)
+    # Checkbox seleksi (row_selectable) - default kecentang buat baris yang
+    # "Pilih"=True (ada di DWH DAN confirmed dipakai di Dataiku, lihat
+    # build_table_union() di data_core.py). Kolom "Pilih" mentahnya
+    # disembunyikan dari tampilan, diganti checkbox di kolom paling kiri.
+    selected_rows = combined.index[combined["Pilih"]].tolist()
+    display_cols = [c for c in combined.columns if c != "Pilih"]
+
     table_out = dash_table.DataTable(
         id="info-union-table",
-        data=combined.to_dict("records"),
-        columns=[{"name": c, "id": c, "editable": c == "Pilih"} for c in combined.columns],
-        row_selectable=False,
-        editable=True,
+        data=combined[display_cols].to_dict("records"),
+        columns=[{"name": c, "id": c} for c in display_cols],
+        row_selectable="multi",
+        selected_rows=selected_rows,
         page_size=50,
         sort_action="native",
         filter_action="native",
@@ -469,12 +505,13 @@ def update_info_mode(sel_project, doc_store):
     return html.Div(
         [
             html.P(
-                "Centang (edit kolom 'Pilih' jadi True/False) baris yang mau dibawa, lalu klik Go Compare.",
-                style={"color": "#666"},
+                "Kolom yang ada di DWH & dipakai di Dataiku sudah otomatis tercentang. "
+                "Centang/hilangkan centang di kiri buat sesuaikan, lalu klik Go Compare.",
+                className="text-muted",
             ),
             table_out,
-            html.Button("✅ Go Compare", id="info-go-btn", n_clicks=0, style={"marginTop": "15px"}),
-            html.Div(id="info-save-status"),
+            dbc.Button("✅ Go Compare", id="info-go-btn", n_clicks=0, color="primary", className="mt-3"),
+            html.Div(id="info-save-status", className="mt-2"),
         ]
     )
 
@@ -483,17 +520,17 @@ def update_info_mode(sel_project, doc_store):
     Output("info-save-status", "children"),
     Input("info-go-btn", "n_clicks"),
     State("info-union-table", "data"),
+    State("info-union-table", "selected_rows"),
     State("info-project-dropdown", "value"),
     prevent_initial_call=True,
 )
-def go_compare(n_clicks, table_data, sel_project):
+def go_compare(n_clicks, table_data, selected_rows, sel_project):
     if not n_clicks or not table_data:
         raise PreventUpdate
 
-    picked = pd.DataFrame(table_data)
-    picked = picked[picked["Pilih"].isin([True, "True", "true"])]
+    picked = pd.DataFrame(table_data).iloc[selected_rows or []]
     if picked.empty:
-        return html.P("Nggak ada baris yang dicentang (Pilih=True).", style={"color": "orange"})
+        return html.P("Nggak ada baris yang dicentang.", style={"color": "orange"})
 
     proj_df = df[df["Project"] == sel_project]
     frames = []

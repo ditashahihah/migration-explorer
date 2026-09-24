@@ -38,6 +38,20 @@ CODE_RECIPE_TYPES = {
     "hive", "impala", "pyspark", "sparkr", "spark_scala",
 }
 
+
+def flatten_refs(io_roles):
+    """Struktur inputs/outputs recipe Dataiku: {"role": {"items": [{"ref":
+    "nama_dataset"}, ...]}, ...}. Gabung SEMUA role jadi 1 list nama dataset
+    (recipe kayak Join bisa punya role tambahan buat input kedua/ketiga)."""
+    names = []
+    for role in (io_roles or {}).values():
+        for it in role.get("items", []):
+            ref = it.get("ref")
+            if ref:
+                names.append(ref)
+    return names
+
+
 client = dataiku.api_client()
 project = client.get_project(dataiku.default_project_key())
 
@@ -54,7 +68,10 @@ for item in recipes:
     try:
         settings = project.get_recipe(nama).get_settings()
         try:
-            entry["definition"] = settings.get_recipe_raw_definition()
+            definition = settings.get_recipe_raw_definition()
+            entry["definition"] = definition
+            entry["inputs"] = flatten_refs(definition.get("inputs"))
+            entry["outputs"] = flatten_refs(definition.get("outputs"))
         except Exception as e:
             entry["definition_error"] = str(e)
         if jenis in CODE_RECIPE_TYPES:
