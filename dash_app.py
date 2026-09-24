@@ -433,17 +433,33 @@ def parse_uploaded(contents, filename):
         "dataset_meta": dataset_meta,
         "table_confirmed_map": table_confirmed_map,
         "n_recipes": len(doc_recipes),
+        "input_datasets": sorted({n for r in doc_recipes for n in r.inputs}),
+        "output_datasets": sorted({n for r in doc_recipes for n in r.outputs}),
     }
     total_cols_from_map = len({(t, c) for t, cols in table_confirmed_map.items() for c in cols})
     total_table = len(dataset_meta) or len(table_confirmed_map)
     total_kolom = sum(len(v["columns"]) for v in dataset_meta.values()) or total_cols_from_map
-    status = html.Div(
-        [
-            html.P(f"✅ {filename} terbaca: {total_table} table, {total_kolom} kolom, {len(doc_recipes)} recipe."),
-        ],
-        style={"color": "green"},
+    status = html.P(
+        f"✅ {filename} terbaca: {total_table} table, {total_kolom} kolom, {len(doc_recipes)} recipe.",
+        style={"color": "#3cb371"},
     )
     return store, status
+
+
+def _dataset_mini_table(dataset_meta: dict, names: list, id_: str):
+    if not names:
+        return html.P("-", className="text-muted")
+    rows = [
+        {
+            "Dataset": n,
+            "Type": dataset_meta.get(n, {}).get("type") or "-",
+            "Connection": dataset_meta.get(n, {}).get("connection") or "-",
+            "Jumlah Kolom": len(dataset_meta.get(n, {}).get("columns") or []),
+        }
+        for n in names
+    ]
+    rows.sort(key=lambda r: (0 if "DWH" in r["Connection"].upper() else 1, r["Connection"], r["Dataset"]))
+    return data_table(pd.DataFrame(rows), id_)
 
 
 @app.callback(
@@ -455,16 +471,85 @@ def update_info_mode(sel_project, doc_store):
     if not sel_project:
         return html.P("Pilih project dulu.", className="text-muted")
 
-    proj_df = df[df["Project"] == sel_project]
-    tables_for_project = sorted(proj_df["Short Table"].dropna().unique())
-    table_confirmed_map = (doc_store or {}).get("table_confirmed_map", {})
-
+    doc_store = doc_store or {}
+    table_confirmed_map = doc_store.get("table_confirmed_map", {})
     if not table_confirmed_map:
         return html.P(
             "Belum ada dokumen/dump di-upload (atau belum ada recipe yang confirmed "
             "makai table project ini) — upload dulu buat lihat kolom yang dipakai di Dataiku.",
             className="text-muted",
         )
+
+    proj_df = df[df["Project"] == sel_project]
+    tables_for_project = sorted(proj_df["Short Table"].dropna().unique())
+    dataset_meta = doc_store.get("dataset_meta", {})
+
+    total_table = len(dataset_meta) or len(table_confirmed_map)
+    total_kolom = sum(len(v["columns"]) for v in dataset_meta.values()) or len(
+        {(t, c) for t, cols in table_confirmed_map.items() for c in cols}
+    )
+    matched_in_project = [t for t in tables_for_project if t in dataset_meta or t in table_confirmed_map]
+    edm_datasets = sorted(
+        n for n in dataset_meta if n not in matched_in_project and "EDM" in (dataset_meta[n].get("connection") or "").upper()
+    )
+
+    conn_opts = sorted(
+        {dataset_meta.get(t, {}).get("connection") or "-" for t in tables_for_project}
+    )
+
+    children = [
+        metric_row(
+            [
+                ("Total Table", total_table),
+                ("Total Kolom", total_kolom),
+                ("Jadi Input Recipe", len(doc_store.get("input_datasets", []))),
+                ("Jadi Output Recipe", len(doc_store.get("output_datasets", []))),
+            ]
+        ),
+    ]
+    if dataset_meta:
+        children += [
+            html.H5(f"📘 Data DWH ({len(matched_in_project)})", className="mt-3"),
+            _dataset_mini_table(dataset_meta, matched_in_project, "info-dwh-table"),
+            html.H5(f"📦 Data EDM ({len(edm_datasets)})", className="mt-3"),
+            _dataset_mini_table(dataset_meta, edm_datasets, "info-edm-table"),
+        ]
+
+    children += [
+        html.H5("🧩 Kolom yang dipakai di Dataiku per table", className="mt-3"),
+        dbc.Select(
+            id="info-conn-filter",
+            options=[{"label": "Semua Connection", "value": "__all__"}]
+            + [{"label": c, "value": c} for c in conn_opts],
+            value="__all__",
+            className="mb-2",
+            style={"maxWidth": "350px"},
+        ),
+        html.Div(id="info-table-area"),
+    ]
+    return html.Div(children)
+
+
+@app.callback(
+    Output("info-table-area", "children"),
+    Input("info-project-dropdown", "value"),
+    Input("info-doc-store", "data"),
+    Input("info-conn-filter", "value"),
+)
+def update_info_table(sel_project, doc_store, conn_filter):
+    if not sel_project:
+        raise PreventUpdate
+
+    doc_store = doc_store or {}
+    table_confirmed_map = doc_store.get("table_confirmed_map", {})
+    dataset_meta = doc_store.get("dataset_meta", {})
+    proj_df = df[df["Project"] == sel_project]
+    tables_for_project = sorted(proj_df["Short Table"].dropna().unique())
+
+    if conn_filter and conn_filter != "__all__":
+        tables_for_project = [
+            t for t in tables_for_project if (dataset_meta.get(t, {}).get("connection") or "-") == conn_filter
+        ]
 
     frames = []
     for t in tables_for_project:
@@ -476,7 +561,8 @@ def update_info_mode(sel_project, doc_store):
 
     if not frames:
         return html.P(
-            "Nggak ada kolom project ini yang confirmed dipakai di dokumen/dump yang di-upload.",
+            "Nggak ada kolom project ini yang confirmed dipakai di dokumen/dump yang di-upload "
+            "(buat filter connection ini).",
             className="text-muted",
         )
 
