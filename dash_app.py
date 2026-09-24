@@ -532,11 +532,11 @@ def update_info_mode(sel_project, doc_store):
         dbc.Select(
             id="info-conn-filter",
             options=[
-                {"label": "Table Project Ini (DWH)", "value": "__project__"},
-                {"label": "Semua Connection (semua table, termasuk EDM dll)", "value": "__all__"},
+                {"label": "Default (DWH + EDM + BICC)", "value": "__default__"},
+                {"label": "Semua Connection (semua table, termasuk AMFS_dataset/MPI_DATAMART dll)", "value": "__all__"},
             ]
             + [{"label": c, "value": c} for c in conn_opts],
-            value="__project__",
+            value="__default__",
             className="mb-2",
             style={"maxWidth": "420px"},
         ),
@@ -562,17 +562,23 @@ def update_info_table(sel_project, doc_store, conn_filter):
     tables_for_project = sorted(proj_df["Short Table"].dropna().unique())
     all_tables_pool = sorted(set(tables_for_project) | set(table_confirmed_map))
 
+    def _conn_of(t):
+        return (dataset_meta.get(t, {}).get("connection") or "-").upper()
+
     if conn_filter == "__all__":
         tables_to_show = all_tables_pool
-    elif conn_filter and conn_filter != "__project__":
+    elif conn_filter and conn_filter not in ("__default__", None):
         # Connection spesifik dipilih - saring dari SEMUA table (termasuk
         # EDM/dataset lain di luar Coretan project ini), bukan cuma yang
         # di-track project ini.
-        tables_to_show = [
-            t for t in all_tables_pool if (dataset_meta.get(t, {}).get("connection") or "-") == conn_filter
-        ]
+        tables_to_show = [t for t in all_tables_pool if _conn_of(t) == conn_filter.upper()]
     else:
-        tables_to_show = tables_for_project
+        # Default: connection DWH/EDM/BICC aja (exclude mis. AMFS_dataset,
+        # MPI_DATAMART) - dari SELURUH pool, bukan cuma yang di-track
+        # Coretan project ini (soalnya EDM nggak pernah ke-track Coretan).
+        tables_to_show = [
+            t for t in all_tables_pool if any(k in _conn_of(t) for k in ("DWH", "EDM", "BICC"))
+        ]
 
     frames = []
     for t in tables_to_show:
