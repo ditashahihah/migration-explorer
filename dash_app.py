@@ -25,19 +25,20 @@ import pandas as pd
 from dash import Input, Output, State, callback_context, dash_table, dcc, html
 from dash.exceptions import PreventUpdate
 
-from dataiku_doc import build_project_column_report, parse_dataiku_doc
 from dataiku_json import parse_dataiku_json
 from stage_mapping import build_full_lineage_table
 
 from data_core import (
     DEFAULT_PATH,
     DISPLAY_COLUMNS,
+    SELECTED_SHEET_COLUMNS,
     STATUS_COLORS,
     build_table_confirmed_map,
     build_table_union,
     gsheet_enabled,
     load_data,
     pipeline_stage_counts,
+    rows_from_union,
     save_project_selection,
 )
 
@@ -363,8 +364,8 @@ def render_info_mode():
     return html.Div(
         [
             html.P(
-                "Pilih project → upload dokumen/dump Dataiku Flow (opsional) → pilih table → "
-                "centang kolom yang mau dibawa. Hasilnya disimpan ke "
+                "Pilih project → upload dump Dataiku Flow (JSON) → pilih table → "
+                "centang kolom yang bener-bener dipakai. Hasilnya disimpan ke "
                 + ("Google Sheets" if gsheet_enabled() else f"`{DEFAULT_PATH}`") + ".",
                 className="text-muted",
             ),
@@ -375,19 +376,9 @@ def render_info_mode():
                 className="mb-2",
                 style={"maxWidth": "400px"},
             ),
-            dbc.RadioItems(
-                id="info-doc-format",
-                options=[{"label": "JSON", "value": "json"}, {"label": "DOCX", "value": "docx"}],
-                value="json",
-                inline=True,
-                className="btn-group mb-2",
-                inputClassName="btn-check",
-                labelClassName="btn btn-outline-secondary btn-sm",
-                labelCheckedClassName="active",
-            ),
             dcc.Upload(
                 id="info-upload",
-                children=html.Div(["Drag & drop atau ", html.A("klik buat pilih file")]),
+                children=html.Div(["Drag & drop atau ", html.A("klik buat pilih file (.json)")]),
                 style={
                     "width": "100%", "height": "50px", "lineHeight": "50px", "borderWidth": "1px",
                     "borderStyle": "dashed", "borderRadius": "5px", "textAlign": "center", "marginTop": "5px",
@@ -402,9 +393,7 @@ def render_info_mode():
 def _parse_doc_contents(contents: str, filename: str):
     _, content_string = contents.split(",", 1)
     decoded = base64.b64decode(content_string)
-    if filename.lower().endswith(".json"):
-        return parse_dataiku_json(io.BytesIO(decoded))
-    return parse_dataiku_doc(io.BytesIO(decoded))
+    return parse_dataiku_json(io.BytesIO(decoded))
 
 
 @app.callback(
@@ -493,9 +482,11 @@ def update_info_mode(sel_project, doc_store):
         n for n in dataset_meta if n not in matched_in_project and "EDM" in (dataset_meta[n].get("connection") or "").upper()
     )
 
-    conn_opts = sorted(
-        {dataset_meta.get(t, {}).get("connection") or "-" for t in tables_for_project}
-    )
+    # Pool connection buat filter: dari table project ini (DWH) DAN dari
+    # semua table lain yang confirmed dipakai di Dataiku (termasuk EDM) -
+    # biar "Filter Connection" bisa dipakai buat munculin table EDM juga.
+    all_tables_pool = sorted(set(tables_for_project) | set(table_confirmed_map))
+    conn_opts = sorted({dataset_meta.get(t, {}).get("connection") or "-" for t in all_tables_pool})
 
     children = [
         metric_row(
@@ -547,12 +538,18 @@ def update_info_table(sel_project, doc_store, conn_filter):
     tables_for_project = sorted(proj_df["Short Table"].dropna().unique())
 
     if conn_filter and conn_filter != "__all__":
-        tables_for_project = [
-            t for t in tables_for_project if (dataset_meta.get(t, {}).get("connection") or "-") == conn_filter
+        # Filter connection spesifik dipilih - perluas pool ke SEMUA table
+        # yang confirmed dipakai (termasuk EDM/dataset lain di luar Coretan
+        # project ini), baru disaring by connection.
+        all_tables_pool = sorted(set(tables_for_project) | set(table_confirmed_map))
+        tables_to_show = [
+            t for t in all_tables_pool if (dataset_meta.get(t, {}).get("connection") or "-") == conn_filter
         ]
+    else:
+        tables_to_show = tables_for_project
 
     frames = []
-    for t in tables_for_project:
+    for t in tables_to_show:
         union_df = build_table_union(proj_df, table_confirmed_map, t)
         if union_df.empty:
             continue
@@ -618,19 +615,12 @@ def go_compare(n_clicks, table_data, selected_rows, sel_project):
     if picked.empty:
         return html.P("Nggak ada baris yang dicentang.", style={"color": "orange"})
 
-    proj_df = df[df["Project"] == sel_project]
-    frames = []
-    for t, group in picked.groupby("Short Table"):
-        recipe_map = dict(zip(group["Column DWH"], group["Dipakai di Recipe"]))
-        subset = proj_df[
-            (proj_df["Short Table"] == t) & (proj_df["Column DWH"].isin(group["Column DWH"]))
-        ].copy()
-        subset["Dipakai di Recipe"] = subset["Column DWH"].map(recipe_map)
-        frames.append(subset)
-
-    new_rows = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=DISPLAY_COLUMNS)
+    frames = [
+        rows_from_union(sel_project, t, group) for t, group in picked.groupby("Short Table")
+    ]
+    new_rows = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=SELECTED_SHEET_COLUMNS[:-1])
     try:
-        combined, unique_df, compile_df = save_project_selection(sel_project, new_rows)
+        combined, unique_df = save_project_selection(sel_project, new_rows)
     except Exception as e:  # noqa: BLE001
         return html.P(f"Gagal menyimpan seleksi: {e}", style={"color": "red"})
 

@@ -19,19 +19,20 @@ import os
 import pandas as pd
 import streamlit as st
 
-from dataiku_doc import build_project_column_report, parse_dataiku_doc
 from dataiku_json import parse_dataiku_json
 from stage_mapping import build_full_lineage_table
 from data_core import (
     BACKUP_PATH,
     DEFAULT_PATH,
     DISPLAY_COLUMNS,
+    SELECTED_SHEET_COLUMNS,
     SHEET_NAME,
     STATUS_COLORS,
     build_table_confirmed_map,
     build_table_union,
     gsheet_enabled,
     pipeline_stage_counts,
+    rows_from_union,
 )
 from data_core import load_data as _load_data_core
 from data_core import save_project_selection as _save_project_selection_core
@@ -48,18 +49,15 @@ except Exception:
     pass
 
 
-@st.cache_data(show_spinner="Membaca dokumen Dataiku Flow (dokumen besar bisa makan waktu ~10-20 detik)...")
+@st.cache_data(show_spinner="Membaca dump Dataiku Flow (dump besar bisa makan waktu ~10-20 detik)...")
 def parse_uploaded_doc(file_bytes: bytes, file_name: str):
-    """Wrapper cached di atas parser dokumen supaya dokumen besar tidak
+    """Wrapper cached di atas parser dump JSON supaya dump besar tidak
     di-parse ulang tiap kali ada interaksi UI lain (checkbox, dsb).
 
-    Terima 2 format: .docx (export "Dataiku Flow Documentation", butuh
-    python-docx) atau .json (dump dari dump_flow_via_notebook.py, tidak
-    butuh library eksternal - dipakai kalau di-hosting di tempat yang tidak
-    nyediain python-docx, misal Streamlit in Snowflake)."""
-    if file_name.lower().endswith(".json"):
-        return parse_dataiku_json(io.BytesIO(file_bytes))
-    return parse_dataiku_doc(io.BytesIO(file_bytes))
+    Cuma JSON (dari dump_flow_via_notebook.py/export_code.txt) - dukungan
+    .docx sudah dihapus (JSON lebih portable, jalan di environment manapun
+    tanpa butuh python-docx)."""
+    return parse_dataiku_json(io.BytesIO(file_bytes))
 
 
 @st.cache_data(show_spinner="Membangun tabel lineage DWH → Bronze → Silver 1 → Silver 2...")
@@ -294,21 +292,20 @@ elif mode == "🔎 Cari by Project":
 elif mode == "🧩 Info Table by Project":
     if gsheet_enabled():
         st.caption(
-            "Pilih project → pilih table yang relevan → centang kolom DWH yang "
-            "bener-bener dipakai project ini. Hasilnya disimpan ke **Google "
-            "Sheets** (3 tab: Selected Columns, Unique Columns per Table, "
-            "Compile per Table) — jadi tetap persisten meskipun hosting "
-            "di-restart. Submit ulang untuk project yang sama akan "
-            "menggantikan seleksi lama project itu, bukan menumpuk duplikat."
+            "Pilih project → upload dump Dataiku Flow (JSON) → pilih table → "
+            "centang kolom yang bener-bener dipakai. Hasilnya disimpan ke **Google "
+            "Sheets** (2 tab: Selected Columns, Unique Columns) — jadi tetap "
+            "persisten meskipun hosting di-restart. Submit ulang untuk project "
+            "yang sama akan menggantikan seleksi lama project itu, bukan menumpuk duplikat."
         )
     else:
         st.caption(
-            "Pilih project → pilih table yang relevan → centang kolom DWH yang "
-            "bener-bener dipakai project ini. Hasilnya ditulis balik sebagai 3 "
+            "Pilih project → upload dump Dataiku Flow (JSON) → pilih table → "
+            "centang kolom yang bener-bener dipakai. Hasilnya ditulis balik sebagai 2 "
             f"sheet tambahan di `{DEFAULT_PATH}` sendiri (Selected Columns, Unique "
-            "Columns per Table, Compile per Table) — sheet Coretan & sheet lain "
-            "tidak disentuh. Submit ulang untuk project yang sama akan "
-            "menggantikan seleksi lama project itu, bukan menumpuk duplikat. "
+            "Columns) — sheet Coretan & sheet lain tidak disentuh. Submit ulang "
+            "untuk project yang sama akan menggantikan seleksi lama project itu, "
+            "bukan menumpuk duplikat. "
             f"Sebelum tiap kali nulis, file di-backup dulu ke `{BACKUP_PATH}`. "
             "(Belum ada kredensial Google Sheets — kalau di-deploy ke hosting "
             "gratis, hasil seleksi ini bisa hilang tiap container restart; "
@@ -325,73 +322,43 @@ elif mode == "🧩 Info Table by Project":
     proj_df = df[df["Project"] == sel_project]
     tables_for_project = sorted(proj_df["Short Table"].dropna().unique())
 
-    with st.expander("📄 Bantu pre-fill dari Dokumen/Dump Dataiku Flow (opsional)"):
+    with st.expander("📄 Upload dump Dataiku Flow (JSON, opsional)"):
         st.caption(
-            "Upload dokumen 'Dataiku Flow Documentation' (.docx) ATAU dump JSON dari "
-            "`dump_flow_via_notebook.py` (dipakai kalau .docx tidak bisa, misal di "
-            "Streamlit in Snowflake yang tidak nyediain python-docx) buat project ini. "
+            "Upload dump JSON dari `dump_flow_via_notebook.py`/`export_code.txt`. "
             "Buat tiap table, kolomnya digabung dari 2 sumber: yang tercatat di "
-            "Coretan (DWH) dan yang ada di schema dataset ini di dokumen/dump (khusus "
-            "dataset yang berperan sebagai INPUT recipe, bukan output/perantara) "
-            "— lalu ditandai kolom itu ada di DWH & Dokumen, cuma di DWH, atau "
-            "cuma di Dokumen. Default kecentang kalau kolomnya ada di DWH; kolom "
-            "yang cuma ada di Dokumen (belum tercatat di Coretan) default TIDAK "
-            "kecentang dan tetap perlu direview manual sebelum ditambah ke Coretan."
-        )
-        doc_format = st.radio(
-            "Format file",
-            ["JSON", "DOCX"],
-            horizontal=True,
-            key=f"selkol_docformat_{sel_project}",
+            "Coretan (DWH) dan yang confirmed dipakai di recipe Dataiku — lalu "
+            "ditandai ada di DWH & dipakai di Dataiku, cuma di DWH, atau cuma di "
+            "Dataiku. Default kecentang kalau ADA DI DWH DAN dipakai di Dataiku; "
+            "sisanya perlu direview manual dulu."
         )
         doc_file = st.file_uploader(
-            f"Upload dump ({doc_format.lower()})",
-            type=["json"] if doc_format == "JSON" else ["docx"],
-            key=f"selkol_doc_{sel_project}_{doc_format}",
+            "Upload dump (.json)",
+            type=["json"],
+            key=f"selkol_doc_{sel_project}",
         )
 
-    doc_report = {}
     doc_datasets = {}
     doc_recipes = []
-    input_datasets = set()
+    table_confirmed_map = {}
     if doc_file is not None:
         try:
             doc_datasets, doc_recipes = parse_uploaded_doc(doc_file.getvalue(), doc_file.name)
-        except ImportError as e:
-            st.error(str(e))
+        except Exception as e:  # noqa: BLE001 - tampilkan apapun errornya ke user
+            st.error(f"Gagal parse file: {e}")
             st.stop()
-        coretan_short_tables = set(df["Short Table"].dropna().unique())
-        doc_report = build_project_column_report(doc_datasets, doc_recipes, coretan_short_tables)
 
-        matched_in_project = [t for t in tables_for_project if t in doc_report]
-        unmatched_in_project = [t for t in tables_for_project if t not in doc_report]
-        st.success(
-            f"Dokumen terbaca: {len(doc_datasets)} dataset, {len(doc_recipes)} recipe. "
-            f"{len(matched_in_project)} dari {len(tables_for_project)} table project ini "
-            "ketemu namanya persis di dokumen (sisanya kemungkinan bukan tabel DWH "
-            "yang di-track Coretan, atau beda nama)."
-        )
-
-        total_columns = sum(len(ds.columns) for ds in doc_datasets.values())
+        table_confirmed_map = build_table_confirmed_map(doc_recipes)
         input_datasets = {n for r in doc_recipes for n in r.inputs}
         output_datasets = {n for r in doc_recipes for n in r.outputs}
 
-        # Fallback buat file JSON format lama (recipe-only, tidak ada section
-        # dataset sama sekali) - Total Table/Kolom dihitung dari confirmed_columns
-        # tiap recipe (persis sumber data yang dipakai di tabel per-table di
-        # bawah), bukan dari doc_datasets yang kosong.
-        if not doc_datasets:
-            fallback_tables = {ds for r in doc_recipes for ds in r.confirmed_columns}
-            fallback_cols = {
-                (ds, c) for r in doc_recipes for ds, cols in r.confirmed_columns.items() for c in cols
-            }
-            total_table_count = len(fallback_tables)
-            total_columns = len(fallback_cols)
-        else:
-            total_table_count = len(doc_datasets)
+        total_table = len(doc_datasets) or len(table_confirmed_map)
+        total_columns = sum(len(ds.columns) for ds in doc_datasets.values()) or len(
+            {(t, c) for t, cols in table_confirmed_map.items() for c in cols}
+        )
+        st.success(f"Dump terbaca: {total_table} table, {total_columns} kolom, {len(doc_recipes)} recipe.")
 
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Table", total_table_count)
+        m1.metric("Total Table", total_table)
         m2.metric("Total Kolom", total_columns)
         m3.metric("Jadi Input Recipe", len(input_datasets))
         m4.metric("Jadi Output Recipe", len(output_datasets))
@@ -401,58 +368,47 @@ elif mode == "🧩 Info Table by Project":
             "jadi totalnya bisa lebih besar dari jumlah dataset unik."
         )
 
-        if unmatched_in_project:
-            st.caption(
-                f"❓ Table yang TIDAK ketemu di dokumen ({len(unmatched_in_project)}): "
-                + ", ".join(unmatched_in_project)
-                + " — kolomnya tetap default semua tercentang (perilaku lama), review manual."
-            )
-
-        # Panel Data DWH/EDM butuh info Type/Connection/Schema per dataset,
-        # yang cuma ada kalau sumbernya .docx atau dump JSON format baru -
-        # file JSON format lama (recipe-only) doc_datasets-nya kosong, jadi
-        # panel ini disembunyikan aja daripada nampilin (0) yang nggak berguna.
+        matched_in_project = [t for t in tables_for_project if t in doc_datasets or t in table_confirmed_map]
         if doc_datasets:
-            with st.expander(f"📘 Data DWH ({len(matched_in_project)})"):
-                render_dataset_table(doc_datasets, matched_in_project, key_prefix=f"matched_ds_{sel_project}")
-
             edm_datasets = sorted(
                 n
                 for n in doc_datasets
                 if n not in matched_in_project and "EDM" in (doc_datasets[n].connection or "").upper()
             )
+            with st.expander(f"📘 Data DWH ({len(matched_in_project)})"):
+                render_dataset_table(doc_datasets, matched_in_project, key_prefix=f"matched_ds_{sel_project}")
             with st.expander(f"📦 Data EDM ({len(edm_datasets)})"):
                 st.caption(
                     "Dataset di flow Dataiku ini yang connection-nya EDM (bukan DWH) dan "
-                    "TIDAK match nama-nya ke Short Table Coretan."
+                    "TIDAK match nama-nya ke Short Table Coretan. Table di sini bisa dipilih "
+                    "juga di bawah lewat 'Filter Connection', buat lihat detail kolomnya "
+                    "yang dipakai di Dataiku."
                 )
                 render_dataset_table(doc_datasets, edm_datasets, key_prefix=f"other_ds_{sel_project}")
 
-        uncertain_tables = [t for t in matched_in_project if doc_report[t]["uncertain"]]
-        if uncertain_tables:
-            st.caption(
-                f"⚠️ {len(uncertain_tables)} table ({', '.join(uncertain_tables)}) punya kolom yang "
-                "belum pasti (kena recipe Prepare, dokumennya sendiri tidak mencatat nama "
-                "kolom yang diproses) — kolom-kolom itu default TIDAK tercentang, review manual."
-            )
+    if not table_confirmed_map:
+        st.info("Upload dump JSON dulu buat lihat kolom yang dipakai di Dataiku.")
+        st.stop()
 
-    # Connection tiap table diambil dari dataset match di dokumen/dump (kalau
-    # ada) - table yang belum ketemu di dokumen dianggap "-" (tidak diketahui).
+    # Pool table: default cuma table yang di-track project ini di Coretan
+    # (DWH). Table lain (mis. EDM, yang nggak ada di Coretan sama sekali)
+    # cuma muncul kalau user explicit milih connection-nya di Filter
+    # Connection - biar default-nya tetap ringkas & fokus ke project ini.
+    all_tables_pool = sorted(
+        set(tables_for_project) | {t for t in table_confirmed_map if t not in tables_for_project}
+    )
     table_connections = {
-        t: (doc_datasets[t].connection or "-") if t in doc_datasets else "-"
-        for t in tables_for_project
+        t: (doc_datasets[t].connection or "-") if t in doc_datasets else "-" for t in all_tables_pool
     }
     conn_opts = sorted(set(table_connections.values()))
     sel_conn = st.multiselect(
-        "Filter Connection (kosongkan buat tampilkan semua)",
+        "Filter Connection (kosongkan buat cuma table project ini)",
         conn_opts,
         default=[],
         key=f"selkol_connfilter_{sel_project}",
     )
     candidate_tables = (
-        [t for t in tables_for_project if table_connections[t] in sel_conn]
-        if sel_conn
-        else tables_for_project
+        [t for t in all_tables_pool if table_connections[t] in sel_conn] if sel_conn else tables_for_project
     )
 
     # Key ikut sel_conn - kalau filter Connection ganti, widget-nya "fresh"
@@ -460,18 +416,20 @@ elif mode == "🧩 Info Table by Project":
     # tidak valid lagi buat opsi (candidate_tables) yang baru.
     conn_key_part = ",".join(sorted(sel_conn))
     sel_tables_input = st.multiselect(
-        "Pilih Table yang relevan untuk project ini (kosongkan buat tampilkan semua)",
+        "Pilih Table (kosongkan buat tampilkan semua dari filter di atas)",
         candidate_tables,
         default=[],
         key=f"selkol_tables_{sel_project}_{conn_key_part}",
     )
     sel_tables = sel_tables_input if sel_tables_input else candidate_tables
-    table_confirmed_map = build_table_confirmed_map(doc_recipes)
 
     picked_frames = []
     for t in sel_tables:
         st.markdown(f"**📄 {t}**")
         cols_for_table = build_table_union(proj_df, table_confirmed_map, t)
+        if cols_for_table.empty:
+            st.caption("Nggak ada kolom yang confirmed dipakai di Dataiku buat table ini.")
+            continue
 
         used_only_count = int(
             (cols_for_table["Keterangan"] == "📄 Dipakai di Dataiku, TIDAK ada di DWH").sum()
@@ -492,19 +450,18 @@ elif mode == "🧩 Info Table by Project":
         )
         picked = edited.loc[edited["Pilih"]]
         if not picked.empty:
-            recipe_map = dict(zip(picked["Column DWH"], picked["Dipakai di Recipe"]))
-            subset = proj_df[
-                (proj_df["Short Table"] == t) & (proj_df["Column DWH"].isin(picked["Column DWH"]))
-            ].copy()
-            subset["Dipakai di Recipe"] = subset["Column DWH"].map(recipe_map)
-            picked_frames.append(subset)
+            picked_frames.append(rows_from_union(sel_project, t, picked))
 
     st.divider()
     if st.button("✅ Go Compare", type="primary", disabled=not picked_frames):
-        new_rows = pd.concat(picked_frames, ignore_index=True) if picked_frames else pd.DataFrame(columns=DISPLAY_COLUMNS)
+        new_rows = (
+            pd.concat(picked_frames, ignore_index=True)
+            if picked_frames
+            else pd.DataFrame(columns=SELECTED_SHEET_COLUMNS[:-1])
+        )
 
         try:
-            combined, unique_df, compile_df = save_project_selection(sel_project, new_rows)
+            combined, unique_df = save_project_selection(sel_project, new_rows)
         except Exception as e:  # noqa: BLE001 - tampilkan apapun errornya ke user
             st.error(f"Gagal menyimpan seleksi: {e}")
             st.stop()
@@ -513,7 +470,7 @@ elif mode == "🧩 Info Table by Project":
         st.success(
             f"Tersimpan ke {target}: {len(new_rows)} kolom untuk "
             f"project **{sel_project}**. Total keseluruhan: {len(combined)} baris seleksi, "
-            f"{len(unique_df)} kolom unik di {compile_df['Short Table'].nunique() if not compile_df.empty else 0} table."
+            f"{len(unique_df)} kolom unik."
         )
 
         if not gsheet_enabled():

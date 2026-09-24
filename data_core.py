@@ -67,13 +67,25 @@ STATUS_COLORS = {
 }
 
 SHEET_SELECTED = "Selected Columns"
-SHEET_UNIQUE = "Unique Columns per Table"
-SHEET_COMPILE = "Compile per Table"
+SHEET_UNIQUE = "Unique Columns"
 BACKUP_PATH = DEFAULT_PATH + ".bak"
 
-# kolom yang disimpan di sheet "Selected Columns" (sama seperti DISPLAY_COLUMNS
-# + recipe Dataiku mana aja yang confirmed makai kolom ini + jejak waktu submit)
-SELECTED_SHEET_COLUMNS = DISPLAY_COLUMNS + ["Dipakai di Recipe", "Selected At"]
+# kolom yang disimpan di sheet "Selected Columns" - Project+Short Table+Column
+# DWH+Status Coretan (kalau ada) + "Ada di DWH" (Ya/Tidak, dari union DWH vs
+# Dataiku - lihat build_table_union/keterangan_label) + recipe Dataiku mana
+# aja yang confirmed makai kolom ini + jejak waktu submit. SENGAJA nggak ada
+# Bronze/Silver/Domain/dst lagi (beda dari DISPLAY_COLUMNS) - biar seragam
+# buat baris DWH maupun baris EDM/dataset lain yang nggak tercatat di Coretan
+# sama sekali (nggak punya mapping Bronze/Silver).
+SELECTED_SHEET_COLUMNS = [
+    "Project",
+    "Short Table",
+    "Column DWH",
+    "Status",
+    "Ada di DWH",
+    "Dipakai di Recipe",
+    "Selected At",
+]
 
 
 def get_secret(name: str, default=None):
@@ -207,6 +219,20 @@ def build_table_union(proj_df: pd.DataFrame, table_confirmed_map: dict, table: s
     return pd.DataFrame(rows, columns=["Pilih", "Column DWH", "Status", "Keterangan", "Dipakai di Recipe"])
 
 
+def rows_from_union(project: str, table: str, picked_df: pd.DataFrame) -> pd.DataFrame:
+    """Ubah baris union_df yang sudah difilter (cuma yang dicentang/dipilih)
+    jadi baris siap simpan ke sheet 'Selected Columns' - Project & Short
+    Table ditempel, Keterangan diringkas jadi 'Ada di DWH' (Ya/Tidak).
+    Dipakai langsung dari union_df, TIDAK perlu join balik ke Coretan lagi -
+    jadi seragam buat baris DWH maupun baris EDM/dataset lain yang nggak
+    tercatat di Coretan sama sekali."""
+    out = picked_df[["Column DWH", "Status", "Keterangan", "Dipakai di Recipe"]].copy()
+    out.insert(0, "Short Table", table)
+    out.insert(0, "Project", project)
+    out["Ada di DWH"] = out["Keterangan"].apply(lambda k: "Ya" if "✅" in str(k) else "Tidak")
+    return out.drop(columns=["Keterangan"])[SELECTED_SHEET_COLUMNS[:-1]]  # tanpa "Selected At" (ditambahin pas save)
+
+
 # ---------------------------------------------------------------------
 # Seleksi Kolom: backend Google Sheets lewat Apps Script Web App
 # ---------------------------------------------------------------------
@@ -236,8 +262,8 @@ def load_selected_sheet_gsheet() -> pd.DataFrame:
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=SELECTED_SHEET_COLUMNS)
 
 
-def save_project_selection_gsheet(project: str, new_rows: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Sama seperti save_project_selection_local, tapi 3 sheet-nya ditulis ke
+def save_project_selection_gsheet(project: str, new_rows: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Sama seperti save_project_selection_local, tapi 2 sheet-nya ditulis ke
     tab Google Sheets lewat Apps Script Web App, bukan ke file Excel lokal —
     supaya persisten di hosting gratis yang storage lokalnya sementara."""
     existing = load_selected_sheet_gsheet()
@@ -249,13 +275,11 @@ def save_project_selection_gsheet(project: str, new_rows: pd.DataFrame) -> tuple
 
     combined = pd.concat([existing, new_rows], ignore_index=True)
     unique_df = build_unique_sheet(combined)
-    compile_df = build_compile_sheet(unique_df)
 
     _appscript_call("write", sheet=SHEET_SELECTED, **_df_to_appscript_payload(combined))
     _appscript_call("write", sheet=SHEET_UNIQUE, **_df_to_appscript_payload(unique_df))
-    _appscript_call("write", sheet=SHEET_COMPILE, **_df_to_appscript_payload(compile_df))
 
-    return combined, unique_df, compile_df
+    return combined, unique_df
 
 
 # ---------------------------------------------------------------------
@@ -271,22 +295,10 @@ def load_selected_sheet_local(path: str) -> pd.DataFrame:
 
 
 def build_unique_sheet(selected_df: pd.DataFrame) -> pd.DataFrame:
-    """Union unik (Short Table, Column DWH) dari seluruh project yang pernah diseleksi."""
+    """Union unik (Short Table, Column DWH) dari SELURUH project yang pernah
+    diseleksi, plus daftar project pemakainya - sheet ke-2 ("concat/unik")."""
     key_cols = ["Short Table", "Column DWH"]
-    detail_cols = [
-        c
-        for c in [
-            "Status",
-            "Bronze Table",
-            "Bronze Column",
-            "Silver1 Table",
-            "Silver1 Column",
-            "Silver2 Table",
-            "Silver2 Column",
-            "Domain",
-        ]
-        if c in selected_df.columns
-    ]
+    detail_cols = [c for c in ["Status", "Ada di DWH"] if c in selected_df.columns]
     unique_df = selected_df.drop_duplicates(subset=key_cols)[key_cols + detail_cols].copy()
 
     projects_by_key = (
@@ -299,54 +311,10 @@ def build_unique_sheet(selected_df: pd.DataFrame) -> pd.DataFrame:
     return unique_df.sort_values(key_cols).reset_index(drop=True)
 
 
-def build_compile_sheet(unique_df: pd.DataFrame) -> pd.DataFrame:
-    """Compile hitungan per table: dari DWH berapa yang sampai Bronze/Silver/Hardcode/Gap."""
-    if unique_df.empty:
-        return pd.DataFrame(
-            columns=[
-                "Short Table",
-                "Jumlah Kolom DWH",
-                "Jumlah ke Bronze",
-                "Jumlah ke Silver 1",
-                "Jumlah ke Silver 2",
-                "Jumlah Hardcode",
-                "Jumlah Gap",
-            ]
-        )
-
-    grouped = unique_df.groupby("Short Table").agg(
-        **{
-            "Jumlah Kolom DWH": ("Column DWH", "count"),
-            "Jumlah ke Bronze": ("Status", lambda s: (s == "Table").sum()),
-            "Jumlah Hardcode": ("Status", lambda s: (s == "Hardcode").sum()),
-            "Jumlah Gap": ("Status", lambda s: (s == "Gap").sum()),
-        }
-    )
-    if "Silver1 Table" in unique_df.columns:
-        grouped["Jumlah ke Silver 1"] = unique_df.groupby("Short Table")["Silver1 Table"].apply(
-            lambda s: s.notna().sum()
-        )
-    if "Silver2 Table" in unique_df.columns:
-        grouped["Jumlah ke Silver 2"] = unique_df.groupby("Short Table")["Silver2 Table"].apply(
-            lambda s: s.notna().sum()
-        )
-
-    grouped = grouped.reset_index()
-    col_order = [
-        "Short Table",
-        "Jumlah Kolom DWH",
-        "Jumlah ke Bronze",
-        "Jumlah ke Silver 1",
-        "Jumlah ke Silver 2",
-        "Jumlah Hardcode",
-        "Jumlah Gap",
-    ]
-    return grouped[[c for c in col_order if c in grouped.columns]]
-
-
-def save_project_selection_local(path: str, project: str, new_rows: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Ganti seleksi lama project ini dengan yang baru, lalu tulis ulang 3 sheet
-    seleksi ke dalam `path` (file master) tanpa mengubah sheet-sheet lain."""
+def save_project_selection_local(path: str, project: str, new_rows: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Ganti seleksi lama project ini dengan yang baru, lalu tulis ulang 2 sheet
+    seleksi (Selected Columns + Unique Columns) ke dalam `path` (file master)
+    tanpa mengubah sheet-sheet lain."""
     existing = load_selected_sheet_local(path)
     existing = existing[existing["Project"] != project] if not existing.empty else existing
 
@@ -356,7 +324,6 @@ def save_project_selection_local(path: str, project: str, new_rows: pd.DataFrame
 
     combined = pd.concat([existing, new_rows], ignore_index=True)
     unique_df = build_unique_sheet(combined)
-    compile_df = build_compile_sheet(unique_df)
 
     # backup 1-langkah-mundur sebelum nulis, jaga-jaga kalau proses tulis gagal
     shutil.copy2(path, path + ".bak")
@@ -364,9 +331,8 @@ def save_project_selection_local(path: str, project: str, new_rows: pd.DataFrame
     with pd.ExcelWriter(path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
         combined.to_excel(writer, sheet_name=SHEET_SELECTED, index=False)
         unique_df.to_excel(writer, sheet_name=SHEET_UNIQUE, index=False)
-        compile_df.to_excel(writer, sheet_name=SHEET_COMPILE, index=False)
 
-    return combined, unique_df, compile_df
+    return combined, unique_df
 
 
 # ---------------------------------------------------------------------
@@ -374,7 +340,7 @@ def save_project_selection_local(path: str, project: str, new_rows: pd.DataFrame
 # kredensialnya (deploy di hosting gratis), fallback ke file Excel lokal
 # kalau tidak (jalan lokal di laptop).
 # ---------------------------------------------------------------------
-def save_project_selection(project: str, new_rows: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def save_project_selection(project: str, new_rows: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     if gsheet_enabled():
         return save_project_selection_gsheet(project, new_rows)
     return save_project_selection_local(DEFAULT_PATH, project, new_rows)
