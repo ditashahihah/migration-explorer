@@ -1,6 +1,6 @@
 dash>=2.17
+dash-bootstrap-components>=1.6
 pandas>=2.0
 openpyxl>=3.1
 requests>=2.31
-python-docx==1.2.0
 gunicorn>=21.2
